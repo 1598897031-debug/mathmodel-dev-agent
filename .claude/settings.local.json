@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from mathmodel import __version__; print\\(f'MathModel Dev Agent v{__version__}'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python main.py --help)",
+      "Bash(python main.py examples/sample_optimization.txt --project-name test_run)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m pip install pytest -q)",
+      "Bash(python -c \"from mathmodel.core.document_parser import DocumentParser; p = DocumentParser\\(\\); print\\('.md support OK'\\)\")",
+      "Bash(python -c \"from mathmodel.agents.parser_agent import ParserAgent; print\\('ParserAgent import OK'\\)\")",
+      "Bash(python main.py examples/sample_optimization.txt --project-name parser_test)",
+      "Bash(python main.py examples/sample_prediction.txt --project-name parser_test_pred)",
+      "Bash(python -c \"from mathmodel.agents.strategy_agent import StrategyAgent; print\\('StrategyAgent import OK'\\)\")",
+      "Bash(python -c \"from mathmodel.agents.code_agent import CodeAgent; print\\('CodeAgent import OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"import numpy; print\\('numpy OK'\\)\")",
+      "Bash(python main.py examples/sample_optimization.txt --project-name code_test)",
+      "Bash(python -c \"from mathmodel.agents.experiment_agent import ExperimentAgent, rmse, mape, accuracy; print\\('ExperimentAgent import OK'\\)\")",
+      "Bash(python -c \"import matplotlib; print\\('matplotlib OK'\\)\")",
+      "Bash(python main.py examples/sample_prediction.txt --project-name experiment_test)",
+      "Bash(python main.py examples/sample_prediction.txt --project-name experiment_test2)",
+      "Bash(python main.py examples/sample_prediction.txt --project-name experiment_test3)",
+      "Bash(python main.py examples/sample_prediction.txt --project-name experiment_test4)",
+      "Bash(python main.py examples/sample_prediction.txt --project-name experiment_test5)",
+      "Bash(python main.py examples/sample_optimization.txt --project-name experiment_test6)",
+      "Bash(python main.py examples/sample_optimization.txt --project-name experiment_test7)",
+      "Bash(python main.py examples/sample_optimization.txt --project-name experiment_test8)",
+      "Bash(python -c \"from mathmodel.agents.paper_agent import PaperAgent; print\\('PaperAgent import OK'\\)\")",
+      "Bash(python main.py examples/sample_optimization.txt --project-name paper_test1)",
+      "Bash(python -c \"from mathmodel.agents.github_agent import GitHubAgent; print\\('GitHubAgent import OK'\\)\")",
+      "Bash(python *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(git clone *)",
+      "Bash(gh auth *)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
