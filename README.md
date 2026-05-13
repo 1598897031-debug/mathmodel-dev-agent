@@ -14,6 +14,7 @@ MathModel Dev Agent takes a math modeling problem statement (TXT, Markdown, or P
 - **GitHub Agent** — Auto-generates README, project description, changelog, summary JSON, and performs git commit/push
 - **Dual LLM Backend** — Supports Claude (Anthropic) and OpenAI with automatic fallback
 - **Fallback Mode** — Runs without API keys using built-in knowledge base templates for all problem types
+- **Unified CLI** — Product-like command interface with `solve`, `list`, and `info` subcommands
 
 ## Architecture
 
@@ -48,86 +49,66 @@ flowchart TD
 | Paper | All previous outputs | `paper.md` + `paper.docx` |
 | GitHub | All outputs | README, changelog, git commit |
 
-## Workflow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant O as Orchestrator
-    participant P as Parser
-    participant S as Strategy
-    participant C as Code
-    participant E as Experiment
-    participant Pa as Paper
-    participant G as GitHub
-
-    U->>O: python main.py problem.txt
-    O->>P: Parse problem file
-    P-->>O: ProblemSpec
-    O->>S: Generate strategies
-    S-->>O: ModelPlan
-    O->>C: Generate & execute code
-    C-->>O: ExecResult
-    O->>E: Analyze results
-    E-->>O: ExpResult
-    O->>Pa: Generate paper
-    Pa-->>O: Paper draft
-    O->>G: Package & commit
-    G-->>O: Git hash + push status
-    O-->>U: Execution summary
-```
-
-## Installation
+## CLI Usage
 
 ```bash
-# Clone the repository
-git clone https://github.com/1598897031-debug/mathmodel-dev-agent.git
-cd mathmodel-dev-agent
+# Full pipeline — parse, model, code, experiment, paper
+python main.py solve <problem_file> [--project-name NAME] [--verbose] [--debug] [--skills]
 
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
+# List past runs
+python main.py list
 
-# Install dependencies
-pip install -r requirements.txt
+# Show details of a specific run
+python main.py info <project_dir>
 
-# Configure API keys (optional — runs in fallback mode without keys)
-cp .env.example .env
-# Edit .env with your API keys
+# Backward compatible (alias for solve)
+python main.py <problem_file>
 ```
 
-### Dependencies
+### Subcommands
 
-| Category | Packages |
-|----------|----------|
-| LLM API | `anthropic`, `openai` |
-| Document parsing | `pypdf` |
-| Scientific computing | `numpy`, `scipy` |
-| Visualization | `matplotlib` |
-| CLI | `typer`, `rich` |
-| Data validation | `pydantic` |
-| Testing | `pytest`, `pytest-asyncio` |
+| Command | Description |
+|---------|-------------|
+| `solve` | Run the complete modeling pipeline |
+| `list` | List all past solve runs with status |
+| `info` | Display detailed info for a specific run |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--project-name`, `-n` | Custom project name (default: `mathmodel`) |
+| `--verbose`, `-v` | Show detailed agent output |
+| `--debug` | Enable debug mode (full traceback on errors) |
+| `--skills` | Display active skills in the execution summary |
 
 ## Quick Start
 
 ```bash
-# Run with a sample optimization problem (fallback mode, no API key needed)
-python main.py examples/sample_optimization.txt
+# Clone and install
+git clone https://github.com/1598897031-debug/mathmodel-dev-agent.git
+cd mathmodel-dev-agent
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+
+# Run with a sample optimization problem (no API key needed)
+python main.py solve examples/sample_optimization.txt
 
 # Run with a prediction problem and custom project name
-python main.py examples/sample_prediction.txt --project-name population_forecast
+python main.py solve examples/sample_prediction.txt --project-name forecast
 
-# Enable verbose output
-python main.py problem.pdf --verbose
+# List past runs
+python main.py list
 
-# Debug mode (shows full traceback on errors)
-python main.py problem.txt --debug
+# View run details
+python main.py info outputs/mathmodel_20260513_225826
 ```
 
 ## Example
 
-Given a problem file like `examples/sample_optimization.txt`:
+Given `examples/sample_optimization.txt`:
 
 ```text
 某工厂生产两种产品 A 和 B。
@@ -138,7 +119,7 @@ Given a problem file like `examples/sample_optimization.txt`:
 求每周最大利润。
 ```
 
-The pipeline produces:
+Running `python main.py solve examples/sample_optimization.txt` produces:
 
 ```
 ================================================================
@@ -146,24 +127,28 @@ The pipeline produces:
 ================================================================
 
   Status:   [OK] Success
-  Project:  projects/mathmodel_20260513_153831
+  Project:  outputs/mathmodel_20260513_225826
 
-  Agent               Status   Time
-  ----------------------------------------
-  Problem Parser      [OK]     1.2s
-  Modeling Strategy   [OK]     0.8s
-  Code Execution      [OK]     3.5s
-  Experiment Analysis [OK]     2.1s
-  Paper Writing       [OK]     4.3s
-  GitHub Automation   [OK]     1.7s
-  ----------------------------------------
-  Total                        13.6s
+  Agent                     Status     Time
+  ---------------------------------------------
+  Problem Parser          [OK]       0.0s
+  Modeling Strategy       [OK]       0.0s
+  Code Execution          [OK]       0.04s
+  Experiment Analysis     [OK]       0.0s
+  Paper Writing           [OK]       0.0s
+  GitHub Automation       [OK]       3.14s
+  ---------------------------------------------
+  Total                              3.21s
 
   Output Files:
-    - projects/.../paper/paper.md
-    - projects/.../code/solution.py
-    - projects/.../experiment_report.md
-    - projects/.../README.md
+    - outputs/.../paper/paper.md
+    - outputs/.../code/solution.py
+    - outputs/.../experiment_report.md
+    - outputs/.../README.md
+
+  Model Metrics:
+    rmse: 1700.3185
+    r_squared: -1.6399
 ================================================================
 ```
 
@@ -197,7 +182,7 @@ mathmodel-dev-agent/
 │   ├── sample_optimization.txt
 │   └── sample_prediction.txt
 ├── tests/                        # Unit tests
-├── projects/                     # Generated project outputs
+├── outputs/                      # Generated run outputs (gitignored)
 ├── main.py                       # CLI entry point
 ├── requirements.txt              # Python dependencies
 ├── pyproject.toml                # Project metadata
@@ -206,7 +191,7 @@ mathmodel-dev-agent/
 
 ## Outputs
 
-Each run generates a self-contained project directory under `projects/`:
+Each `solve` run generates a self-contained directory under `outputs/`:
 
 | File | Description |
 |------|-------------|
@@ -222,6 +207,23 @@ Each run generates a self-contained project directory under `projects/`:
 | `PROJECT_DESCRIPTION.md` | Detailed project description |
 | `CHANGES.md` | Version changelog |
 | `summary.json` | Structured project summary |
+| `execution.log` | Full pipeline execution log with timestamps |
+
+## Current Status
+
+| Component | Status |
+|-----------|--------|
+| Core infrastructure | Complete |
+| 6-agent pipeline | Complete |
+| Fallback knowledge base | Complete (16 approaches across 4 problem types) |
+| Code auto-debug loop | Complete (max 3 retries) |
+| Experiment metrics | Complete (RMSE, MAPE, MAE, R², accuracy) |
+| Paper generation | Complete (Markdown + Word export) |
+| GitHub automation | Complete (README, changelog, git commit) |
+| Unified CLI | Complete (solve / list / info) |
+| Execution logging | Complete |
+| Visualization (plots) | Requires `matplotlib` dependency |
+| LLM integration | Works with API keys; fallback mode without |
 
 ## Roadmap
 
@@ -236,6 +238,8 @@ Each run generates a self-contained project directory under `projects/`:
 - [x] Paper generation (Markdown + Word export)
 - [x] GitHub automation (README, changelog, git commit/push)
 - [x] Unit tests for all agents
+- [x] Unified CLI with solve/list/info subcommands
+- [x] Execution logging and run history
 
 ### Planned
 

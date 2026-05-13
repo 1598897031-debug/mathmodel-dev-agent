@@ -38,6 +38,7 @@ class ExecutorConfig:
 @dataclass
 class ProjectConfig:
     """项目配置"""
+    outputs_dir: Path = PROJECT_ROOT / "outputs"
     projects_dir: Path = PROJECT_ROOT / "projects"
     examples_dir: Path = PROJECT_ROOT / "examples"
     templates_dir: Path = PROJECT_ROOT / "mathmodel" / "templates"

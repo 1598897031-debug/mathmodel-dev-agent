@@ -12,4 +12,5 @@ venv/
 .claude/worktrees/
 .claude/sessions/
 projects/
+outputs/
 test_github_output/
