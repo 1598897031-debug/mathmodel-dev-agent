@@ -1,87 +1,253 @@
 # MathModel Dev Agent
 
-基于 Multi-Agent 的数学建模与自动开发系统。
+An LLM-powered multi-agent system that automates the entire mathematical modeling workflow — from problem parsing to paper generation.
 
-## 功能特性
+MathModel Dev Agent takes a math modeling problem statement (TXT, Markdown, or PDF) and orchestrates a pipeline of six specialized agents to produce a complete solution: structured problem analysis, modeling strategy selection, executable Python code, experiment reports with visualizations, a formatted paper (Markdown + Word), and automatic git versioning.
 
-- **问题解析 Agent**: 自动解析 PDF/TXT 格式的数学建模题目
-- **建模策略 Agent**: 生成多个建模方案并推荐最佳路线
-- **代码执行 Agent**: 自动生成 Python 求解代码并执行
-- **实验分析 Agent**: 自动做实验、绘图、结果分析
-- **论文写作 Agent**: 自动生成数学建模论文框架
-- **GitHub 自动化 Agent**: 自动生成 README、git commit 和 push
+## Features
 
-## 安装
+- **Problem Parser Agent** — Extracts structured problem specifications from TXT/Markdown/PDF files using LLM-based information extraction
+- **Modeling Strategy Agent** — Generates multiple candidate modeling approaches with pros/cons analysis and recommends the optimal route; includes a fallback knowledge base for prediction, optimization, path planning, and statistics problems
+- **Code Execution Agent** — Auto-generates Python solution code, executes it in a sandboxed subprocess, and performs up to 3 rounds of LLM-assisted debugging on failure
+- **Experiment Agent** — Computes evaluation metrics (RMSE, MAPE, MAE, R², accuracy), generates prediction curves, error distributions, and scatter plots
+- **Paper Agent** — Produces a full mathematical modeling paper in Markdown and exports to Word (.docx)
+- **GitHub Agent** — Auto-generates README, project description, changelog, summary JSON, and performs git commit/push
+- **Dual LLM Backend** — Supports Claude (Anthropic) and OpenAI with automatic fallback
+- **Fallback Mode** — Runs without API keys using built-in knowledge base templates for all problem types
 
-```bash
-# 克隆项目
-git clone https://github.com/your-username/mathmodel-dev-agent.git
-cd mathmodel-dev-agent
+## Architecture
 
-# 安装依赖
-pip install -r requirements.txt
+```mermaid
+flowchart TD
+    A[Input: Problem File<br/>TXT / Markdown / PDF] --> B[1. Parser Agent<br/>Document Parsing + LLM Extraction]
+    B -->|ProblemSpec| C[2. Strategy Agent<br/>Multi-Candidate Generation]
+    C -->|ModelPlan| D[3. Code Agent<br/>Code Gen + Execute + Debug Loop]
+    D -->|ExecResult| E[4. Experiment Agent<br/>Metrics + Visualization + Report]
+    E -->|ExpResult| F[5. Paper Agent<br/>Markdown + Word Export]
+    F -->|Paper| G[6. GitHub Agent<br/>README + Commit + Push]
 
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env 填入 API 密钥
+    B -.->|fallback| B1[DocumentParser<br/>pypdf / text reader]
+    C -.->|fallback| C1[Knowledge Base<br/>16 built-in approaches]
+    D -.->|fallback| D1[Code Templates<br/>4 problem-type templates]
+
+    style A fill:#e1f5fe
+    style G fill:#e8f5e9
+    style B1 fill:#fff3e0
+    style C1 fill:#fff3e0
+    style D1 fill:#fff3e0
 ```
 
-## 使用方法
+### Context Flow
+
+| Stage | Input | Output |
+|-------|-------|--------|
+| Parser | Problem file (TXT/PDF) | `ProblemSpec` (title, type, variables, constraints, objective) |
+| Strategy | `ProblemSpec` | `ModelPlan` (approaches list, best recommendation) |
+| Code | `ModelPlan` + `ProblemSpec` | Executed code + stdout + fix history |
+| Experiment | `ExecResult` | Metrics (RMSE/MAPE/R²) + plots + report |
+| Paper | All previous outputs | `paper.md` + `paper.docx` |
+| GitHub | All outputs | README, changelog, git commit |
+
+## Workflow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant P as Parser
+    participant S as Strategy
+    participant C as Code
+    participant E as Experiment
+    participant Pa as Paper
+    participant G as GitHub
+
+    U->>O: python main.py problem.txt
+    O->>P: Parse problem file
+    P-->>O: ProblemSpec
+    O->>S: Generate strategies
+    S-->>O: ModelPlan
+    O->>C: Generate & execute code
+    C-->>O: ExecResult
+    O->>E: Analyze results
+    E-->>O: ExpResult
+    O->>Pa: Generate paper
+    Pa-->>O: Paper draft
+    O->>G: Package & commit
+    G-->>O: Git hash + push status
+    O-->>U: Execution summary
+```
+
+## Installation
 
 ```bash
-# 基本用法
+# Clone the repository
+git clone https://github.com/1598897031-debug/mathmodel-dev-agent.git
+cd mathmodel-dev-agent
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure API keys (optional — runs in fallback mode without keys)
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+### Dependencies
+
+| Category | Packages |
+|----------|----------|
+| LLM API | `anthropic`, `openai` |
+| Document parsing | `pypdf` |
+| Scientific computing | `numpy`, `scipy` |
+| Visualization | `matplotlib` |
+| CLI | `typer`, `rich` |
+| Data validation | `pydantic` |
+| Testing | `pytest`, `pytest-asyncio` |
+
+## Quick Start
+
+```bash
+# Run with a sample optimization problem (fallback mode, no API key needed)
 python main.py examples/sample_optimization.txt
 
-# 指定项目名称
-python main.py examples/sample_prediction.txt --project-name 人口预测
+# Run with a prediction problem and custom project name
+python main.py examples/sample_prediction.txt --project-name population_forecast
 
-# 启用详细输出
+# Enable verbose output
 python main.py problem.pdf --verbose
 
-# 启用调试模式
+# Debug mode (shows full traceback on errors)
 python main.py problem.txt --debug
 ```
 
-## 项目结构
+## Example
+
+Given a problem file like `examples/sample_optimization.txt`:
+
+```text
+某工厂生产两种产品 A 和 B。
+生产 A 每件需要 2 小时加工、1 小时组装；
+生产 B 每件需要 1 小时加工、3 小时组装。
+每周加工工时不超过 120 小时，组装工时不超过 90 小时。
+产品 A 每件利润 50 元，产品 B 每件利润 40 元。
+求每周最大利润。
+```
+
+The pipeline produces:
+
+```
+================================================================
+  Pipeline Execution Summary
+================================================================
+
+  Status:   [OK] Success
+  Project:  projects/mathmodel_20260513_153831
+
+  Agent               Status   Time
+  ----------------------------------------
+  Problem Parser      [OK]     1.2s
+  Modeling Strategy   [OK]     0.8s
+  Code Execution      [OK]     3.5s
+  Experiment Analysis [OK]     2.1s
+  Paper Writing       [OK]     4.3s
+  GitHub Automation   [OK]     1.7s
+  ----------------------------------------
+  Total                        13.6s
+
+  Output Files:
+    - projects/.../paper/paper.md
+    - projects/.../code/solution.py
+    - projects/.../experiment_report.md
+    - projects/.../README.md
+================================================================
+```
+
+## Project Structure
 
 ```
 mathmodel-dev-agent/
-├── mathmodel/                    # 核心代码
-│   ├── agents/                   # 六大 Agent
-│   ├── core/                     # 共享基础设施
-│   ├── templates/                # Prompt 和文档模板
-│   └── utils/                    # 工具函数
-├── projects/                     # 项目输出目录
-├── examples/                     # 示例题目
-├── tests/                        # 测试文件
-├── main.py                       # 主入口
-├── requirements.txt              # 依赖清单
-└── .env.example                  # 环境变量示例
+├── mathmodel/                    # Core package
+│   ├── agents/                   # Six specialized agents
+│   │   ├── base.py               #   BaseAgent + AgentContext + AgentResult
+│   │   ├── parser_agent.py       #   Problem Parser Agent
+│   │   ├── strategy_agent.py     #   Modeling Strategy Agent
+│   │   ├── code_agent.py         #   Code Execution Agent
+│   │   ├── experiment_agent.py   #   Experiment Analysis Agent
+│   │   ├── paper_agent.py        #   Paper Writing Agent
+│   │   └── github_agent.py       #   GitHub Automation Agent
+│   ├── core/                     # Shared infrastructure
+│   │   ├── llm_client.py         #   Unified Claude/OpenAI client
+│   │   ├── code_executor.py      #   Sandboxed code execution
+│   │   ├── document_parser.py    #   PDF/TXT document parser
+│   │   ├── plotter.py            #   Matplotlib visualization
+│   │   └── project_manager.py    #   Project workspace manager
+│   ├── utils/                    # Utility functions
+│   │   ├── file_ops.py           #   File operations
+│   │   ├── validators.py         #   Input validation
+│   │   └── git_ops.py            #   Git operations wrapper
+│   ├── templates/                # Prompt and document templates
+│   ├── orchestrator.py           # Pipeline DAG orchestration
+│   └── config.py                 # Configuration management
+├── examples/                     # Sample problem files
+│   ├── sample_optimization.txt
+│   └── sample_prediction.txt
+├── tests/                        # Unit tests
+├── projects/                     # Generated project outputs
+├── main.py                       # CLI entry point
+├── requirements.txt              # Python dependencies
+├── pyproject.toml                # Project metadata
+└── .env.example                  # Environment variable template
 ```
 
-## 开发阶段
+## Outputs
 
-### Phase 1: 基础设施 ✅
-- [x] 项目结构搭建
-- [x] 配置管理
-- [x] LLM 客户端
-- [x] 代码执行沙箱
+Each run generates a self-contained project directory under `projects/`:
 
-### Phase 2: 核心 Agent (开发中)
-- [ ] 问题解析 Agent
-- [ ] 建模策略 Agent
-- [ ] 代码执行 Agent
+| File | Description |
+|------|-------------|
+| `code/solution.py` | Executable Python solution code |
+| `code/execution_log.txt` | Execution log with debug history |
+| `plots/prediction_curve.png` | Actual vs. predicted comparison chart |
+| `plots/error_distribution.png` | Error distribution bar chart |
+| `plots/scatter_plot.png` | Actual vs. predicted scatter plot |
+| `paper/paper.md` | Mathematical modeling paper (Markdown) |
+| `paper/paper.docx` | Paper exported to Word (if `python-docx` installed) |
+| `experiment_report.md` | Experiment report with metrics and visualizations |
+| `README.md` | Auto-generated project README |
+| `PROJECT_DESCRIPTION.md` | Detailed project description |
+| `CHANGES.md` | Version changelog |
+| `summary.json` | Structured project summary |
 
-### Phase 3: 输出 Agent
-- [ ] 实验分析 Agent
-- [ ] 论文写作 Agent
-- [ ] GitHub 自动化 Agent
+## Roadmap
 
-### Phase 4: 集成测试
-- [ ] 端到端测试
-- [ ] 错误处理完善
-- [ ] 文档编写
+### Completed
 
-## 许可证
+- [x] Core infrastructure (config, LLM client, code executor, project manager)
+- [x] Six-agent pipeline with DAG orchestration
+- [x] LLM-based problem parsing and structured extraction
+- [x] Multi-candidate strategy generation with fallback knowledge base
+- [x] Auto code generation with sandboxed execution and debug loop
+- [x] Experiment metrics calculation and visualization
+- [x] Paper generation (Markdown + Word export)
+- [x] GitHub automation (README, changelog, git commit/push)
+- [x] Unit tests for all agents
+
+### Planned
+
+- [ ] Async pipeline execution for parallel agent runs
+- [ ] Web UI for interactive problem input and result viewing
+- [ ] Support for image-based problems (OCR + chart understanding)
+- [ ] Multi-language paper output (English/Chinese)
+- [ ] Agent memory and cross-session learning
+- [ ] Integration with math modeling competition databases
+- [ ] Docker-based execution sandbox for stronger isolation
+- [ ] Plugin system for custom agents
+
+## License
 
 MIT License
