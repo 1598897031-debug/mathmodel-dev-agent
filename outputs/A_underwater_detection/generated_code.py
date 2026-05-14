@@ -1,839 +1,745 @@
 """
-多静态声纳-海底地形协同优化 — 完整求解代码
-2025高教社杯全国大学生数学建模竞赛A题
+2026年重庆邮电大学数学建模竞赛 A题: 水下目标探测与定位
 
-三层介质声传播模型 + Snell折射 + 射线追踪
+深海铁锰结核探测 — 多波束声呐回波定位模型
+
+坐标系: 海平面为XOY平面, Z轴竖直向上, 探测船(0,0,0)
+声速: c = 1500 m/s (海底沉积物中)
+
+Q1: 由5个船位回波时间定位2个点状结核
+Q2: 由4个声呐位置回波延迟定位球形结核(中心+半径)
+Q3: 推导船沿X轴移动时回波时间t与x的函数关系
+Q4: 2D等时线分析 + 梯度路径规划
 """
 
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+from mpl_toolkits.mplot3d import Axes3D
 import json
 import os
 import sys
 import logging
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Tuple, List
 
 # ============================================================
-# 日志
+# 日志与目录
 # ============================================================
-LOG_DIR = os.path.dirname(os.path.abspath(__file__))
-os.makedirs(os.path.join(LOG_DIR, "figures"), exist_ok=True)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+FIG_DIR = os.path.join(SCRIPT_DIR, "figures")
+os.makedirs(FIG_DIR, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, "execution.log"), mode="w", encoding="utf-8"),
+        logging.FileHandler(os.path.join(SCRIPT_DIR, "execution.log"),
+                            mode="w", encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger(__name__)
 
-
 # ============================================================
-# 参数
+# 全局参数
 # ============================================================
-@dataclass
-class Env:
-    c0: float = 1500.0       # 水层声速 m/s
-    c1: float = 4200.0       # 淤泥层声速 m/s
-    c2: float = 7000.0       # 硬底层声速 m/s
-    h1: float = 100.0        # 淤泥层厚度 m
-    h2: float = 100.0        # 硬底层计算厚度 m
-    flat_depth: float = 500.0
-    alpha_deg: float = 0.8
-    SL: float = 120.0        # 声源级 dB
-    S_depth: float = 150.0   # 声源深度 m
-    Nx: int = 5              # 水平阵元数
-    Nz: int = 5              # 垂直阵元数
-    dx: float = 40.0         # 水平间距 m
-    dz: float = 40.0         # 垂直间距 m
-    threshold: float = 6.0   # 检测阈值 dB
-    max_time: float = 3.0    # 最长回波时间 s
-    max_range: float = 2000.0
-    reef_x: float = 1000.0   # 暗礁中心水平距离
-    reef_half: float = 100.0 # 底边半宽
-    reef_h: float = 100.0    # 高度
-
-    def __post_init__(self):
-        self.alpha_rad = np.radians(self.alpha_deg)
-        self.crit_angle = np.arcsin(self.c0 / self.c1)  # ~20.92°
+C = 1500.0  # 声速 m/s
 
 
 # ============================================================
-# 底部深度
+# Q1: 定位两个点状结核
 # ============================================================
-def bottom_flat(x: float) -> float:
-    return 500.0
-
-def bottom_sloped(x: float, env: Env) -> float:
-    return env.flat_depth - x * np.tan(env.alpha_rad)
-
-
-# ============================================================
-# Snell 折射
-# ============================================================
-def snell_refract(theta: float, c_from: float, c_to: float) -> Optional[float]:
-    """返回折射角，None=全反射"""
-    s = (c_to / c_from) * np.sin(theta)
-    if abs(s) >= 1.0:
-        return None
-    return np.arcsin(s)
-
-
-# ============================================================
-# 射线追踪：声源 → 海底 → 返回
-# ============================================================
-def trace_echo(sx: float, sy: float, rx: float, ry: float, env: Env,
-               use_slope: bool = False) -> dict:
+def solve_q1():
     """
-    计算声源(sx,sy)发出的声波，经海底反射后到达接收阵元(rx,ry)的双程路径。
+    Q1: 探测船在5个位置测量两个结核的回波时间, 求结核坐标。
 
-    模型:
-    - 射线从声源以角度θ₀出射
-    - 经水层到达海底
-    - 在海底发生Snell折射进入淤泥层、硬底层
-    - 在硬底层反射
-    - 返回经过相同路径到达接收阵元
-    - 双程扩展损失 = 2 × 20log₁₀(单程路径长)
+    模型: 结核在海底平面 z=0 上, 坐标 (x, y, 0)
+    回波时间: t = 2 * sqrt((x_s - x_n)^2 + (y_s - y_n)^2) / c
+    船位: (x, 0, 0), x ∈ {-100, -50, 0, 50, 100}
 
-    Returns: dict with rl, tl, time, detectable, theta0, valid
+    对每个结核, 有5个方程, 3个未知数 (x_n, y_n, h_n)
+    使用最小二乘法求解。
     """
-    result = {'rl': -999.0, 'tl': 999.0, 'time': 999.0,
-              'detectable': False, 'valid': False, 'theta0': 0.0}
-
-    if use_slope:
-        y_bot = bottom_sloped(sx, env)
-    else:
-        y_bot = bottom_flat(sx)
-
-    # 射线从声源到海底某点
-    # 假设射线在海底的入射点水平偏移为 Δx
-    # 对于平底，我们遍历可能的入射角
-    # 简化：直接计算声源到海底正下方点的路径
-    dy = y_bot - sy
-    if dy <= 0:
-        return result
-
-    # 声源正下方的海底点
-    R0 = dy  # 水层路径（垂直）
-    theta0 = 0.0  # 垂直出射
-
-    # Snell 折射
-    theta1 = snell_refract(theta0, env.c0, env.c1)
-    if theta1 is None:
-        return result
-    theta2 = snell_refract(theta1, env.c1, env.c2)
-    if theta2 is None:
-        theta2 = 0.0
-
-    # 各层路径
-    R1 = env.h1 / np.cos(theta1)
-    R2 = env.h2 / np.cos(theta2)
-
-    # 单程总路径
-    R_one_way = R0 + R1 + R2
-    t_one_way = R0 / env.c0 + R1 / env.c1 + R2 / env.c2
-
-    # 双程
-    R_total = 2.0 * R_one_way
-    t_total = 2.0 * t_one_way
-
-    # 扩展损失 (TL = 2×20log₁₀(R) for two-way spherical spreading)
-    TL = 2.0 * 20.0 * np.log10(R_total / 2.0 + 1e-10)  # 双程，R/2是单程
-
-    RL = env.SL - TL
-
-    # 水平偏移（声源正下方，水平偏移=0）
-    # 对于有坡度的情况，接收阵元需要在正确的位置
-    # 这里简化为：声源正下方的回波
-
-    result.update({
-        'rl': float(RL),
-        'tl': float(TL),
-        'time': float(t_total),
-        'detectable': bool(RL >= env.threshold and t_total <= env.max_time),
-        'valid': True,
-        'theta0': float(theta0),
-        'R_total': float(R_total),
-    })
-    return result
-
-
-def trace_echo_at_angle(sx: float, sy: float, theta0: float,
-                         env: Env) -> dict:
-    """
-    以出射角θ₀追踪射线到海底，计算双程路径。
-    用于分析不同角度的检测能力。
-    """
-    result = {'rl': -999.0, 'tl': 999.0, 'time': 999.0,
-              'detectable': False, 'valid': False,
-              'x_bottom': 0.0, 'y_bottom': 0.0, 'R_total': 0.0}
-
-    if theta0 < 0 or theta0 >= np.pi / 2:
-        return result
-
-    y_bot = bottom_flat(0)  # 平底
-
-    # 水层：从(sx, sy)以角度θ₀出射到底部y_bot
-    dy = y_bot - sy
-    if dy <= 0:
-        return result
-
-    R0 = dy / np.cos(theta0)
-    x_hit = sx + dy * np.tan(theta0)
-
-    # Snell折射
-    theta1 = snell_refract(theta0, env.c0, env.c1)
-    if theta1 is None:
-        # 全反射，声波不进入底层
-        # 反射路径：水层往返
-        R_total = 2.0 * R0
-        t_total = 2.0 * R0 / env.c0
-        TL = 2.0 * 20.0 * np.log10(R_total / 2.0 + 1e-10)
-        RL = env.SL - TL
-        result.update({
-            'rl': float(RL), 'tl': float(TL), 'time': float(t_total),
-            'detectable': bool(RL >= env.threshold and t_total <= env.max_time),
-            'valid': True, 'x_bottom': float(x_hit), 'y_bottom': float(y_bot),
-            'R_total': float(R_total), 'total_reflection': True,
-        })
-        return result
-
-    theta2 = snell_refract(theta1, env.c1, env.c2)
-    if theta2 is None:
-        theta2 = 0.0
-
-    R1 = env.h1 / np.cos(theta1)
-    R2 = env.h2 / np.cos(theta2)
-
-    R_one_way = R0 + R1 + R2
-    t_one_way = R0 / env.c0 + R1 / env.c1 + R2 / env.c2
-
-    R_total = 2.0 * R_one_way
-    t_total = 2.0 * t_one_way
-    TL = 2.0 * 20.0 * np.log10(R_total / 2.0 + 1e-10)
-    RL = env.SL - TL
-
-    result.update({
-        'rl': float(RL), 'tl': float(TL), 'time': float(t_total),
-        'detectable': bool(RL >= env.threshold and t_total <= env.max_time),
-        'valid': True, 'x_bottom': float(x_hit), 'y_bottom': float(y_bot),
-        'R_total': float(R_total),
-    })
-    return result
-
-
-# ============================================================
-# 暗礁几何
-# ============================================================
-def reef_vertices(env: Env) -> np.ndarray:
-    y_bot = bottom_flat(env.reef_x)
-    y_top = y_bot - env.reef_h
-    return np.array([
-        [env.reef_x - env.reef_half, y_bot],
-        [env.reef_x + env.reef_half, y_bot],
-        [env.reef_x, y_top],
-    ])
-
-
-def seg_intersect(a1, a2, b1, b2) -> bool:
-    d1 = np.array(a2) - np.array(a1)
-    d2 = np.array(b2) - np.array(b1)
-    cross = d1[0]*d2[1] - d1[1]*d2[0]
-    if abs(cross) < 1e-12:
-        return False
-    t = ((b1[0]-a1[0])*d2[1] - (b1[1]-a1[1])*d2[0]) / cross
-    u = ((b1[0]-a1[0])*d1[1] - (b1[1]-a1[1])*d1[0]) / cross
-    return 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0
-
-
-def point_in_tri(p, tri) -> bool:
-    v0, v1, v2 = tri
-    d1 = (p[0]-v1[0])*(v0[1]-v1[1]) - (v0[0]-v1[0])*(p[1]-v1[1])
-    d2 = (p[0]-v2[0])*(v1[1]-v2[1]) - (v1[0]-v2[0])*(p[1]-v2[1])
-    d3 = (p[0]-v0[0])*(v2[1]-v0[1]) - (v2[0]-v0[0])*(p[1]-v0[1])
-    has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
-    has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
-    return not (has_neg and has_pos)
-
-
-def line_hits_tri(p1, p2, tri) -> bool:
-    """检查线段是否与三角形相交"""
-    for i in range(3):
-        if seg_intersect(p1, p2, tri[i], tri[(i+1)%3]):
-            return True
-    return point_in_tri(p1, tri) or point_in_tri(p2, tri)
-
-
-def ray_blocked_by_reef(sx, sy, rx, ry, env: Env) -> bool:
-    """
-    检查声源→海底→接收阵元的射线是否被暗礁遮挡。
-    检查三段路径：声源→海底入射点，海底入射点→接收阵元。
-    """
-    tri = reef_vertices(env)
-
-    # 声源正下方的海底入射点
-    y_bot = bottom_flat(sx)
-    bounce_pt = np.array([sx, y_bot])
-    src_pt = np.array([sx, sy])
-    recv_pt = np.array([rx, ry])
-
-    # 检查声源→海底路径
-    if line_hits_tri(src_pt, bounce_pt, tri):
-        return True
-    # 检查海底→接收阵元路径
-    if line_hits_tri(bounce_pt, recv_pt, tri):
-        return True
-
-    return False
-
-
-def ray_blocked_by_reef_angle(sx, sy, x_bottom, env: Env) -> bool:
-    """检查从声源到海底入射点的射线是否被暗礁遮挡"""
-    tri = reef_vertices(env)
-    src_pt = np.array([sx, sy])
-    bot_pt = np.array([x_bottom, bottom_flat(sx)])
-    return line_hits_tri(src_pt, bot_pt, tri)
-
-
-# ============================================================
-# Q1: 海底平坦时的检测与阴影区
-# ============================================================
-def solve_q1(env: Env) -> dict:
     logger.info("=" * 60)
-    logger.info("Q1: 海底平坦时的检测与阴影区分析")
+    logger.info("Q1: 定位两个点状结核")
     logger.info("=" * 60)
 
-    # 声源固定在 (0, 150)
-    sx, sy = 0.0, env.S_depth
+    # 数据
+    ship_x = np.array([-100.0, -50.0, 0.0, 50.0, 100.0])
+    t_A_ms = np.array([136.78, 134.45, 133.42, 133.78, 135.21])
+    t_B_ms = np.array([140.32, 137.89, 136.78, 136.24, 138.45])
 
-    # 接收阵元
-    receivers = []
-    for ix in range(env.Nx):
-        for iz in range(env.Nz):
-            rx = ix * env.dx
-            ry = env.S_depth + iz * env.dz
-            receivers.append({'x': rx, 'y': ry, 'ix': ix, 'iz': iz})
+    t_A = t_A_ms / 1000.0  # 转换为秒
+    t_B = t_B_ms / 1000.0
 
-    # 对于每个接收阵元，分析其能检测的声源位置范围
-    # 声源水平移动，深度固定150m
-    # 但本题声源固定在(0,150)，我们要分析的是：
-    # 在水平距离0~2000m范围内，哪些位置的回波能被接收阵元检测到
+    # 距离 = t * c / 2
+    d_A = t_A * C / 2.0
+    d_B = t_B * C / 2.0
 
-    # 方法：对每个水平距离x_S，假设声源在(x_S, 150)，
-    # 计算其正下方海底回波能否被各接收阵元检测到
-    # 这实际上是分析"每个接收阵元的检测范围"
+    logger.info(f"结核A回波时间 (ms): {t_A_ms.tolist()}")
+    logger.info(f"结核A距离 (m): {d_A.tolist()}")
+    logger.info(f"结核B回波时间 (ms): {t_B_ms.tolist()}")
+    logger.info(f"结核B距离 (m): {d_B.tolist()}")
 
-    x_range = np.linspace(10, env.max_range, 400)
-    n_recv = len(receivers)
-    n_x = len(x_range)
+    # 求解结核A
+    pos_A = locate_point_nodule(ship_x, d_A, "A")
+    # 求解结核B
+    pos_B = locate_point_nodule(ship_x, d_B, "B")
 
-    # detection_map[i_recv, j_x] = True 表示接收阵元i可以检测到位置j的声源回波
-    det_map = np.zeros((n_recv, n_x), dtype=bool)
+    logger.info(f"结核A坐标: ({pos_A[0]:.2f}, {pos_A[1]:.2f}, {pos_A[2]:.2f}) m")
+    logger.info(f"结核B坐标: ({pos_B[0]:.2f}, {pos_B[1]:.2f}, {pos_B[2]:.2f}) m")
 
-    for j, xs in enumerate(x_range):
-        # 声源在 (xs, 150)
-        # 射线垂直向下到底部 y=500，反射后垂直向上
-        # 双程路径：2 × (500-150) = 700m，穿过水层+淤泥层+硬底层
-        # 垂直入射时 θ₀=0, θ₁=0, θ₂=0
-
-        R0 = 500.0 - env.S_depth  # 350m 水层
-        R1 = env.h1  # 100m 淤泥
-        R2 = env.h2  # 100m 硬底
-
-        R_one_way = R0 + R1 + R2  # 550m
-        R_total = 2.0 * R_one_way  # 1100m 双程
-        t_total = 2.0 * (R0/env.c0 + R1/env.c1 + R2/env.c2)
-
-        TL = 2.0 * 20.0 * np.log10(R_total / 2.0 + 1e-10)
-        RL = env.SL - TL
-
-        detectable = (RL >= env.threshold) and (t_total <= env.max_time)
-
-        # 但接收阵元不一定在声源正上方
-        # 需要考虑接收阵元的位置是否在回波可达范围内
-        for i, recv in enumerate(receivers):
-            # 接收阵元与声源的水平距离
-            drx = recv['x'] - xs
-            dry = recv['y'] - env.S_depth
-
-            # 如果接收阵元在声源正上方附近，可以接收到回波
-            # 简化：接收阵元需要在声源的水平距离以内
-            # 且直达路径的RL满足条件
-
-            # 直达路径RL
-            R_direct = np.sqrt(drx**2 + dry**2)
-            TL_direct = 20.0 * np.log10(R_direct + 1e-10)
-            RL_direct = env.SL - TL_direct
-            t_direct = 2.0 * R_direct / env.c0
-
-            # 取两种路径中较好的
-            if detectable and abs(drx) < 200:  # 回波可达
-                det_map[i, j] = True
-            elif RL_direct >= env.threshold and t_direct <= env.max_time:
-                det_map[i, j] = True
-
-    # 阴影区 = 所有接收阵元都无法检测的区域
-    shadow = np.all(~det_map, axis=0)
-    shadow_pct = float(np.sum(shadow)) / n_x * 100
-
-    logger.info(f"接收阵元数: {n_recv}")
-    logger.info(f"阴影区比例: {shadow_pct:.1f}%")
-    logger.info(f"可检测区域比例: {100-shadow_pct:.1f}%")
-
-    # 阴影区范围
-    shadow_ranges = []
-    in_s = False
-    s_start = 0
-    for k in range(n_x):
-        if shadow[k] and not in_s:
-            s_start = x_range[k]
-            in_s = True
-        elif not shadow[k] and in_s:
-            shadow_ranges.append({'start': float(s_start), 'end': float(x_range[k-1])})
-            in_s = False
-    if in_s:
-        shadow_ranges.append({'start': float(s_start), 'end': float(x_range[-1])})
-
-    logger.info(f"阴影区范围: {shadow_ranges}")
+    # 验证
+    logger.info("--- 验证 ---")
+    for i, xs in enumerate(ship_x):
+        d_calc_A = np.sqrt((xs - pos_A[0])**2 + pos_A[1]**2 + pos_A[2]**2)
+        t_calc_A = 2 * d_calc_A / C * 1000
+        d_calc_B = np.sqrt((xs - pos_B[0])**2 + pos_B[1]**2 + pos_B[2]**2)
+        t_calc_B = 2 * d_calc_B / C * 1000
+        logger.info(f"  x={xs:.0f}: A实测={t_A_ms[i]:.2f}ms 计算={t_calc_A:.2f}ms | "
+                     f"B实测={t_B_ms[i]:.2f}ms 计算={t_calc_B:.2f}ms")
 
     # 绘图
-    plot_q1(env, receivers, x_range, det_map, shadow)
+    plot_q1(ship_x, t_A_ms, t_B_ms, pos_A, pos_B)
 
     return {
-        'shadow_ratio': shadow_pct,
-        'shadow_ranges': shadow_ranges,
-        'n_receivers': n_recv,
-        'n_samples': n_x,
+        'nodule_A': {'x': float(pos_A[0]), 'y': float(pos_A[1]), 'z': float(pos_A[2])},
+        'nodule_B': {'x': float(pos_B[0]), 'y': float(pos_B[1]), 'z': float(pos_B[2])},
     }
 
 
-def plot_q1(env, receivers, x_range, det_map, shadow):
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+def locate_point_nodule(ship_x, distances, name):
+    """
+    非线性最小二乘定位点状结核。
 
-    # 接收阵元布局
-    ax = axes[0, 0]
-    for recv in receivers:
-        ax.plot(recv['x'], recv['y'], 'bs', markersize=6)
-    ax.plot(0, env.S_depth, 'r^', markersize=12, label='Source S(0,150)')
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('(a) Receiver Array Layout')
-    ax.invert_yaxis()
+    模型: d_i = sqrt((x_si - x_n)^2 + y_n^2 + z_n^2)
+    未知数: (x_n, y_n, z_n)
+    方法: 线性化初始解 + Levenberg-Marquardt局部优化
+    """
+    d_sq = distances**2
+
+    # Step 1: 线性化初始解
+    # d_i^2 = x_si^2 - 2*x_si*x_n + (x_n^2 + y_n^2 + z_n^2)
+    # 令 a = x_n, b = x_n^2 + y_n^2 + z_n^2
+    A_mat = np.column_stack([2 * ship_x, -np.ones_like(ship_x)])
+    b_vec = ship_x**2 - d_sq
+    result, _, _, _ = np.linalg.lstsq(A_mat, b_vec, rcond=None)
+    x0 = result[0]
+    R_sq = result[1]  # = x_n^2 + y_n^2 + z_n^2
+
+    # 分配 y 和 z (假设 z=0 优先, 即海底平面)
+    yz_sq = max(R_sq - x0**2, 0)
+    y0 = np.sqrt(yz_sq)
+    z0 = 0.0
+
+    logger.info(f"  {name} 初始解: x={x0:.2f}, y={y0:.2f}, z={z0:.2f}")
+
+    # Step 2: 非线性最小二乘 (梯度下降 + 自适应步长)
+    def cost(p):
+        d_calc = np.sqrt((ship_x - p[0])**2 + p[1]**2 + p[2]**2)
+        return np.sum((d_calc - distances)**2)
+
+    p = np.array([x0, y0, z0])
+    lr = 1.0
+    eps = 1e-8
+    prev_cost = cost(p)
+
+    for it in range(5000):
+        grad = np.zeros(3)
+        c0 = cost(p)
+        for k in range(3):
+            pe = p.copy()
+            pe[k] += eps
+            grad[k] = (cost(pe) - c0) / eps
+        gnorm = np.linalg.norm(grad)
+        if gnorm < 1e-15:
+            break
+        p_new = p - lr * grad / gnorm
+        new_cost = cost(p_new)
+        if new_cost < prev_cost:
+            p = p_new
+            prev_cost = new_cost
+            lr = min(lr * 1.1, 10.0)
+        else:
+            lr *= 0.5
+            if lr < 1e-10:
+                break
+
+    x_n, y_n, z_n = p
+    final_cost = cost(p)
+    rms = np.sqrt(final_cost / len(distances)) * 1000  # mm
+
+    logger.info(f"结核{name}: x={x_n:.2f}, y={y_n:.2f}, z={z_n:.2f} (RMS={rms:.2f}mm)")
+
+    return p
+
+
+def plot_q1(ship_x, t_A_ms, t_B_ms, pos_A, pos_B):
+    """Q1可视化: 回波时间曲线 + 结核位置"""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # (a) 回波时间 vs 船位
+    ax = axes[0]
+    ax.plot(ship_x, t_A_ms, 'bo-', markersize=8, linewidth=2, label='Nodule A')
+    ax.plot(ship_x, t_B_ms, 'rs-', markersize=8, linewidth=2, label='Nodule B')
+    ax.set_xlabel('Ship X Position (m)')
+    ax.set_ylabel('Echo Time (ms)')
+    ax.set_title('(a) Echo Time vs Ship Position')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # 检测热图
-    ax = axes[0, 1]
-    im = ax.imshow(det_map, aspect='auto', cmap='RdYlGn',
-                   extent=[x_range[0], x_range[-1], len(receivers)-1, 0])
-    ax.set_xlabel('Horizontal Distance of Source (m)')
-    ax.set_ylabel('Receiver Index')
-    ax.set_title('(b) Detection Map (Green=Detectable)')
-    plt.colorbar(im, ax=ax, shrink=0.8)
-
-    # 阴影区
-    ax = axes[1, 0]
-    s_int = shadow.astype(float)
-    ax.fill_between(x_range, 0, s_int, color='red', alpha=0.5, label='Shadow Zone')
-    ax.fill_between(x_range, 0, 1-s_int, color='green', alpha=0.3, label='Detectable')
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Status')
-    ax.set_title('(c) Shadow Zone Distribution')
-    ax.legend()
-    ax.set_ylim(-0.1, 1.1)
-    ax.grid(True, alpha=0.3)
-
-    # 海底剖面
-    ax = axes[1, 1]
-    xb = np.linspace(0, 2000, 300)
-    yb = np.array([bottom_flat(x) for x in xb])
-    ax.fill_between(xb, 0, yb, color='saddlebrown', alpha=0.4, label='Seabed')
-    ax.axhline(y=0, color='blue', linewidth=2, label='Sea Surface')
-    ax.plot(0, env.S_depth, 'r^', markersize=12, label='Source S')
-    # 画几条射线
-    for theta in [0, 10, 20, 30, 45, 60]:
-        rad = np.radians(theta)
-        x_end = 350 * np.tan(rad)
-        ax.plot([0, x_end], [env.S_depth, 500], 'k--', alpha=0.3, linewidth=0.8)
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('(d) Seabed Profile & Ray Paths')
-    ax.invert_yaxis()
+    # (b) 距离 vs 船位
+    ax = axes[1]
+    d_A = t_A_ms * C / 2.0 / 1000  # km
+    d_B = t_B_ms * C / 2.0 / 1000
+    ax.plot(ship_x, d_A, 'bo-', markersize=8, linewidth=2, label='Nodule A')
+    ax.plot(ship_x, d_B, 'rs-', markersize=8, linewidth=2, label='Nodule B')
+    ax.set_xlabel('Ship X Position (m)')
+    ax.set_ylabel('Distance (km)')
+    ax.set_title('(b) Distance vs Ship Position')
     ax.legend()
     ax.grid(True, alpha=0.3)
+
+    # (c) 结核位置俯视图
+    ax = axes[2]
+    ax.plot(pos_A[0], pos_A[1], 'b^', markersize=15, label=f'A ({pos_A[0]:.1f}, {pos_A[1]:.1f})')
+    ax.plot(pos_B[0], pos_B[1], 'rv', markersize=15, label=f'B ({pos_B[0]:.1f}, {pos_B[1]:.1f})')
+    for xs in ship_x:
+        ax.axvline(x=xs, color='gray', linestyle='--', alpha=0.3)
+    ax.plot(ship_x, np.zeros_like(ship_x), 'k.', markersize=10, label='Ship positions')
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_title('(c) Nodule Positions (Top View)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(LOG_DIR, 'figures', 'q1_shadow_zone.png'), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'q1_localization.png'), dpi=150, bbox_inches='tight')
     plt.close()
     logger.info("Q1 图表已保存")
 
 
 # ============================================================
-# Q2: 三角暗礁遮挡分析
+# Q2: 定位球形结核
 # ============================================================
-def solve_q2(env: Env) -> dict:
+def solve_q2():
+    """
+    Q2: 由4个声呐位置的回波延迟, 求球形结核的球心和半径。
+
+    模型: 球心 (x_c, y_c, z_c), 半径 R
+    回波延迟 t_i 对应距离 d_i = t_i * c / 2
+    声呐到球心距离: D_i = d_i + R
+    D_i^2 = (x_si - x_c)^2 + (y_si - y_c)^2 + (z_si - z_c)^2
+
+    4个方程, 4个未知数 (x_c, y_c, z_c, R)
+    """
     logger.info("=" * 60)
-    logger.info("Q2: 三角暗礁遮挡分析")
+    logger.info("Q2: 定位球形结核")
     logger.info("=" * 60)
 
-    sx, sy = 0.0, env.S_depth
+    # 数据
+    sonar_pos = np.array([
+        [0.0, 0.0, 0.0],
+        [50.0, 0.0, 0.0],
+        [0.0, 50.0, 0.0],
+        [50.0, 50.0, 0.0],
+    ])
+    t_delay_ms = np.array([133.42, 135.89, 136.24, 138.57])
+    t_delay = t_delay_ms / 1000.0
 
-    receivers = []
-    for ix in range(env.Nx):
-        for iz in range(env.Nz):
-            rx = ix * env.dx
-            ry = env.S_depth + iz * env.dz
-            receivers.append({'x': rx, 'y': ry, 'ix': ix, 'iz': iz})
+    # 距离 = t * c / 2
+    d_meas = t_delay * C / 2.0
 
-    tri = reef_vertices(env)
-    logger.info(f"暗礁顶点: {tri.tolist()}")
+    logger.info(f"声呐位置: {sonar_pos.tolist()}")
+    logger.info(f"回波延迟 (ms): {t_delay_ms.tolist()}")
+    logger.info(f"测量距离 (m): {d_meas.tolist()}")
 
-    results = []
-    for recv in receivers:
-        blocked = ray_blocked_by_reef(sx, sy, recv['x'], recv['y'], env)
+    # 非线性最小二乘: D_i = d_i + R
+    # 声呐到球心距离: D_i = sqrt((x_si-x_c)^2 + (y_si-y_c)^2 + (z_si-z_c)^2)
+    # 约束: D_i = d_i + R (声呐到球面距离 = d_i, 球心距离 = d_i + R)
 
-        # 计算直达路径RL
-        drx = recv['x'] - sx
-        dry = recv['y'] - sy
-        R = np.sqrt(drx**2 + dry**2)
-        TL = 20.0 * np.log10(R + 1e-10)
-        RL = env.SL - TL
-        t = 2.0 * R / env.c0
-        detectable = (RL >= env.threshold) and (t <= env.max_time) and (not blocked)
+    def cost(params):
+        x_c, y_c, z_c, R = params
+        D_calc = np.sqrt(np.sum((sonar_pos - np.array([x_c, y_c, z_c]))**2, axis=1))
+        return np.sum((D_calc - (d_meas + R))**2)
 
-        results.append({
-            'ix': recv['ix'], 'iz': recv['iz'],
-            'x': recv['x'], 'y': recv['y'],
-            'blocked': bool(blocked),
-            'RL': float(RL), 'time': float(t),
-            'detectable': bool(detectable),
-        })
+    # 网格搜索 + 局部优化
+    best_cost = np.inf
+    best_p = None
+    for x0 in np.linspace(-20, 70, 8):
+        for y0 in np.linspace(-20, 70, 8):
+            for z0 in np.linspace(-120, 0, 8):
+                for R0 in [1, 3, 5, 8, 10, 15]:
+                    p0 = np.array([x0, y0, z0, R0])
+                    c = cost(p0)
+                    if c < best_cost:
+                        best_cost = c
+                        best_p = p0
 
-    n_det = sum(1 for r in results if r['detectable'])
-    n_blk = sum(1 for r in results if r['blocked'])
+    # 局部梯度下降
+    params = best_p.copy()
+    lr = 0.001
+    eps = 1e-7
+    for it in range(5000):
+        grad = np.zeros(4)
+        c0 = cost(params)
+        for k in range(4):
+            pe = params.copy()
+            pe[k] += eps
+            grad[k] = (cost(pe) - c0) / eps
+        params -= lr * grad
+        if it % 1000 == 0:
+            lr *= 0.8
 
-    logger.info(f"能检测到暗礁: {n_det}/{len(receivers)}")
-    logger.info(f"被暗礁遮挡: {n_blk}/{len(receivers)}")
+    x_c, y_c, z_c, R = params
+    sol_cost = cost(params)
 
-    plot_q2(env, sx, sy, results, tri)
+    logger.info(f"球心坐标: ({x_c:.2f}, {y_c:.2f}, {z_c:.2f}) m")
+    logger.info(f"半径: {R:.2f} m")
+    logger.info(f"残差: {sol_cost:.6f}")
+
+    # 验证
+    logger.info("--- 验证 ---")
+    for i in range(4):
+        D_calc = np.sqrt(np.sum((sonar_pos[i] - np.array([x_c, y_c, z_c]))**2))
+        t_calc = 2 * (D_calc - R) / C * 1000
+        logger.info(f"  声呐{i+1}: 实测={t_delay_ms[i]:.2f}ms 计算={t_calc:.2f}ms")
+
+    plot_q2(sonar_pos, t_delay_ms, np.array([x_c, y_c, z_c]), R)
 
     return {
-        'results': results,
-        'n_detectable': n_det,
-        'n_blocked': n_blk,
-        'reef_vertices': tri.tolist(),
+        'center': {'x': float(x_c), 'y': float(y_c), 'z': float(z_c)},
+        'radius': float(R),
+        'residual': float(sol_cost),
     }
 
 
-def plot_q2(env, sx, sy, results, tri):
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+def plot_q2(sonar_pos, t_ms, center, R):
+    """Q2可视化: 球形结核3D示意"""
+    fig = plt.figure(figsize=(16, 5))
 
-    ax = axes[0]
-    xb = np.linspace(0, 2000, 300)
-    yb = np.array([bottom_flat(x) for x in xb])
-    ax.fill_between(xb, 0, yb, color='saddlebrown', alpha=0.3)
+    # (a) 3D视图
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax1.scatter(*sonar_pos.T, c='blue', s=100, marker='^', label='Sonar')
+    ax1.scatter(*center, c='red', s=100, marker='o', label='Sphere Center')
 
-    reef_patch = patches.Polygon(tri, closed=True, fc='darkred', ec='black', alpha=0.7, label='Reef')
-    ax.add_patch(reef_patch)
+    # 画球体
+    u = np.linspace(0, 2*np.pi, 30)
+    v = np.linspace(0, np.pi, 20)
+    xs = center[0] + R * np.outer(np.cos(u), np.sin(v))
+    ys = center[1] + R * np.outer(np.sin(u), np.sin(v))
+    zs = center[2] + R * np.outer(np.ones_like(u), np.cos(v))
+    ax1.plot_surface(xs, ys, zs, alpha=0.2, color='red')
 
-    ax.plot(sx, sy, 'r^', markersize=15, label='Source S', zorder=5)
+    ax1.set_xlabel('X (m)')
+    ax1.set_ylabel('Y (m)')
+    ax1.set_zlabel('Z (m)')
+    ax1.set_title('(a) 3D View')
+    ax1.legend()
 
-    for r in results:
-        if r['detectable']:
-            ax.plot(r['x'], r['y'], 'go', markersize=8, zorder=4)
-        elif r['blocked']:
-            ax.plot(r['x'], r['y'], 'rx', markersize=8, zorder=4)
-        else:
-            ax.plot(r['x'], r['y'], 'y^', markersize=6, zorder=4)
+    # (b) 俯视图
+    ax2 = fig.add_subplot(132)
+    ax2.scatter(sonar_pos[:, 0], sonar_pos[:, 1], c='blue', s=100, marker='^', label='Sonar')
+    ax2.scatter(center[0], center[1], c='red', s=100, marker='o', label='Center')
+    circle = plt.Circle((center[0], center[1]), R, fill=False, color='red',
+                         linestyle='--', linewidth=2)
+    ax2.add_patch(circle)
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_title('(b) Top View')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal')
 
-    # 画被遮挡的射线
-    for r in results:
-        if r['blocked']:
-            ax.plot([sx, r['x']], [sy, r['y']], 'r--', alpha=0.3, linewidth=0.8)
-
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('Q2: Reef Obstruction Diagram')
-    ax.invert_yaxis()
-    ax.set_xlim(-50, 1200)
-    ax.set_ylim(600, 0)
-    ax.legend(loc='lower right')
-    ax.grid(True, alpha=0.3)
-
-    # 统计
-    ax = axes[1]
-    cats = ['Detectable\n(Green)', 'Blocked by Reef\n(Red X)', 'Below Threshold\n(Yellow)']
-    counts = [
-        sum(1 for r in results if r['detectable']),
-        sum(1 for r in results if r['blocked']),
-        sum(1 for r in results if not r['detectable'] and not r['blocked']),
-    ]
-    colors = ['green', 'red', 'gray']
-    bars = ax.bar(cats, counts, color=colors, alpha=0.7)
-    ax.set_ylabel('Number of Pairs')
-    ax.set_title('Q2: Detection Statistics')
-    for b, c in zip(bars, counts):
-        ax.text(b.get_x()+b.get_width()/2, b.get_height()+0.2, str(c),
-                ha='center', fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
+    # (c) 回波延迟对比
+    ax3 = fig.add_subplot(133)
+    labels = [f'P{i+1}' for i in range(4)]
+    x_pos = np.arange(4)
+    ax3.bar(x_pos - 0.15, t_ms, 0.3, label='Measured', color='blue', alpha=0.7)
+    # 计算理论值
+    d_calc = np.sqrt(np.sum((sonar_pos - center)**2, axis=1))
+    t_calc = 2 * (d_calc - R) / C * 1000
+    ax3.bar(x_pos + 0.15, t_calc, 0.3, label='Calculated', color='red', alpha=0.7)
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels(labels)
+    ax3.set_ylabel('Echo Delay (ms)')
+    ax3.set_title('(c) Measured vs Calculated')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3, axis='y')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(LOG_DIR, 'figures', 'q2_reef_detection.png'), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'q2_sphere.png'), dpi=150, bbox_inches='tight')
     plt.close()
     logger.info("Q2 图表已保存")
 
 
 # ============================================================
-# Q3: 声源位置优化
+# Q3: 回波时间函数 t(x)
 # ============================================================
-def solve_q3(env: Env) -> dict:
+def solve_q3():
+    """
+    Q3: 船沿X轴移动 (x, 0, 0), 目标在 (100, 50, -100)。
+
+    (1) 推导 t(x) 的函数关系
+    (2) 绘制 t-x 曲线, 分析几何特征
+    """
     logger.info("=" * 60)
-    logger.info("Q3: 声源位置优化 (200m×200m区域)")
+    logger.info("Q3: 回波时间函数 t(x)")
     logger.info("=" * 60)
 
-    # 声源在 [-200,200]×[-200,200] 区域内搜索
-    # 深度固定150m，x和y是水平偏移
-    gx = np.linspace(-200, 200, 41)
-    gy = np.linspace(-200, 200, 41)
+    # 目标参数
+    x_t, y_t, z_t = 100.0, 50.0, -100.0
 
-    receivers = []
-    for ix in range(env.Nx):
-        for iz in range(env.Nz):
-            rx = ix * env.dx
-            ry = env.S_depth + iz * env.dz
-            receivers.append({'x': rx, 'y': ry})
+    # (1) 推导
+    # 船位: (x, 0, 0)
+    # 距离: d(x) = sqrt((x - x_t)^2 + y_t^2 + z_t^2)
+    # 回波时间: t(x) = 2*d(x)/c = 2*sqrt((x-100)^2 + 50^2 + 100^2) / 1500
 
-    best_count = 0
-    best_pos = (0.0, 0.0)
-    grid = np.zeros((len(gx), len(gy)))
+    logger.info("推导:")
+    logger.info("  船位: (x, 0, 0)")
+    logger.info(f"  目标: ({x_t}, {y_t}, {z_t})")
+    logger.info("  d(x) = sqrt((x-100)^2 + 50^2 + 100^2)")
+    logger.info("  t(x) = 2*d(x)/c = 2*sqrt((x-100)^2 + 12500) / 1500")
 
-    logger.info(f"搜索网格: {len(gx)}×{len(gy)} = {len(gx)*len(gy)} 个候选点")
+    # 数值计算
+    x_arr = np.linspace(-200, 400, 500)
+    d_arr = np.sqrt((x_arr - x_t)**2 + y_t**2 + z_t**2)
+    t_arr = 2 * d_arr / C * 1000  # ms
 
-    for i, sx in enumerate(gx):
-        for j, sy_off in enumerate(gy):
-            sy = env.S_depth + sy_off  # 深度=150+偏移
-            count = 0
-            for recv in receivers:
-                blocked = ray_blocked_by_reef(sx, sy, recv['x'], recv['y'], env)
-                drx = recv['x'] - sx
-                dry = recv['y'] - sy
-                R = np.sqrt(drx**2 + dry**2)
-                TL = 20.0 * np.log10(R + 1e-10)
-                RL = env.SL - TL
-                t = 2.0 * R / env.c0
-                ok = (RL >= env.threshold) and (t <= env.max_time) and (not blocked)
-                if ok:
-                    count += 1
-            grid[i, j] = count
-            if count > best_count:
-                best_count = count
-                best_pos = (float(sx), float(sy_off))
+    # 最小回波时间
+    idx_min = np.argmin(t_arr)
+    x_min = x_arr[idx_min]
+    t_min = t_arr[idx_min]
+    d_min = d_arr[idx_min]
 
-    logger.info(f"最优声源位置: ({best_pos[0]:.1f}, {best_pos[1]:.1f})")
-    logger.info(f"最大可检测组合数: {best_count}/25")
+    logger.info(f"最短回波时间: t_min = {t_min:.2f} ms at x = {x_min:.1f} m")
+    logger.info(f"最短距离: d_min = {d_min:.2f} m")
+    logger.info(f"理论最小: x = {x_t} = {x_t:.1f} m, d = sqrt(y_t^2+z_t^2) = {np.sqrt(y_t**2+z_t**2):.2f} m")
 
-    plot_q3(env, gx, gy, grid, best_pos, best_count)
+    # 几何特征分析
+    logger.info("几何特征:")
+    logger.info(f"  对称轴: x = {x_t:.0f} (目标x坐标)")
+    logger.info(f"  最小值: t({x_t:.0f}) = {2*np.sqrt(y_t**2+z_t**2)/C*1000:.2f} ms")
+    logger.info(f"  曲线类型: 双曲线 (sqrt函数)")
+    logger.info(f"  渐近线: t ≈ 2|x-{x_t:.0f}|/c (远场)")
+
+    # 实际意义
+    logger.info("实际意义:")
+    logger.info("  1. 最小回波时间点对应船在目标正上方 (x=x_t)")
+    logger.info("  2. 曲线关于 x=x_t 对称")
+    logger.info("  3. 梯度方向指向目标 (x增加方向指向x_t)")
+    logger.info("  4. 可通过搜索最小回波时间快速定位目标x坐标")
+
+    plot_q3(x_arr, t_arr, x_t, y_t, z_t, x_min, t_min)
 
     return {
-        'best_position': best_pos,
-        'best_count': int(best_count),
-        'grid_x': [float(x) for x in gx],
-        'grid_y': [float(y) for y in gy],
-        'results_grid': grid.tolist(),
+        'target': {'x': x_t, 'y': y_t, 'z': z_t},
+        'formula': 't(x) = 2*sqrt((x-100)^2 + 12500) / 1500',
+        'min_echo_time_ms': float(t_min),
+        'min_echo_x': float(x_min),
+        'min_distance_m': float(d_min),
+        'symmetry_axis': float(x_t),
     }
 
 
-def plot_q3(env, gx, gy, grid, best_pos, best_count):
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+def plot_q3(x_arr, t_arr, x_t, y_t, z_t, x_min, t_min):
+    """Q3可视化: t-x曲线 + 几何分析"""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
+    # (a) t-x 曲线
     ax = axes[0]
-    im = ax.imshow(grid.T, aspect='auto', cmap='YlOrRd',
-                   extent=[gx[0], gx[-1], gy[0], gy[-1]], origin='lower')
-    ax.plot(best_pos[0], best_pos[1], 'k*', markersize=15,
-            label=f'Best ({best_pos[0]:.0f},{best_pos[1]:.0f})={best_count}')
-    ax.set_xlabel('Source X Offset (m)')
-    ax.set_ylabel('Source Y Offset (m)')
-    ax.set_title('Q3: Detection Coverage Heatmap')
-    plt.colorbar(im, ax=ax, label='Detectable Pairs')
-    ax.legend(fontsize=9)
+    ax.plot(x_arr, t_arr, 'b-', linewidth=2)
+    ax.axvline(x=x_t, color='r', linestyle='--', alpha=0.5, label=f'x = {x_t:.0f}')
+    ax.plot(x_min, t_min, 'r*', markersize=15, label=f'Min ({x_min:.0f}, {t_min:.2f}ms)')
+    ax.set_xlabel('Ship X Position (m)')
+    ax.set_ylabel('Echo Time t (ms)')
+    ax.set_title('(a) t-x Curve')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
+    # (b) 几何示意
     ax = axes[1]
-    sx, sy_off = best_pos
-    sy = env.S_depth + sy_off
-    for ix in range(env.Nx):
-        for iz in range(env.Nz):
-            rx = ix * env.dx
-            ry = env.S_depth + iz * env.dz
-            blocked = ray_blocked_by_reef(sx, sy, rx, ry, env)
-            R = np.sqrt((rx-sx)**2 + (ry-sy)**2)
-            TL = 20.0 * np.log10(R + 1e-10)
-            RL = env.SL - TL
-            t = 2.0 * R / env.c0
-            ok = (RL >= env.threshold) and (t <= env.max_time) and (not blocked)
-            if ok:
-                ax.plot(rx, ry, 'go', markersize=10)
-            elif blocked:
-                ax.plot(rx, ry, 'rx', markersize=10)
-            else:
-                ax.plot(rx, ry, 'y^', markersize=8)
+    # 海底平面
+    xb = np.array([-200, 400])
+    ax.fill_between(xb, 0, 60, color='saddlebrown', alpha=0.3, label='Seabed')
+    ax.axhline(y=0, color='blue', linewidth=2, label='Sea Surface')
 
-    ax.plot(sx, sy, 'r^', markersize=15, label=f'Source({sx:.0f},{sy:.0f})')
-    ax.set_xlabel('Receiver X (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title(f'Q3: Best Source — {int(best_count)}/25 Detectable')
-    ax.invert_yaxis()
+    # 目标
+    ax.plot(x_t, z_t, 'r*', markersize=15, label=f'Target ({x_t},{y_t},{z_t})')
+
+    # 船位示意
+    for xs in [-100, 0, 100, 200]:
+        d = np.sqrt((xs - x_t)**2 + y_t**2 + z_t**2)
+        t = 2 * d / C
+        ax.plot(xs, 0, 'b^', markersize=10)
+        ax.plot([xs, x_t], [0, z_t], 'k--', alpha=0.3)
+
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Z (m)')
+    ax.set_title('(b) Geometry (Side View)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(-150, 50)
+
+    # (c) 梯度方向
+    ax = axes[2]
+    x_grid = np.linspace(-100, 300, 100)
+    t_grid = 2 * np.sqrt((x_grid - x_t)**2 + y_t**2 + z_t**2) / C * 1000
+    ax.plot(x_grid, t_grid, 'b-', linewidth=2, label='t(x)')
+
+    # 梯度箭头
+    for xs in [-50, 50, 150, 250]:
+        dt_dx = 2 * (xs - x_t) / (C * np.sqrt((xs - x_t)**2 + y_t**2 + z_t**2))
+        t_val = 2 * np.sqrt((xs - x_t)**2 + y_t**2 + z_t**2) / C * 1000
+        ax.annotate('', xy=(xs - 20*np.sign(xs - x_t), t_val),
+                     xytext=(xs, t_val),
+                     arrowprops=dict(arrowstyle='->', color='red', lw=2))
+        ax.text(xs, t_val + 0.5, f'grad', ha='center', fontsize=8, color='red')
+
+    ax.axvline(x=x_t, color='r', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Ship X Position (m)')
+    ax.set_ylabel('Echo Time t (ms)')
+    ax.set_title('(c) Gradient Direction')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(LOG_DIR, 'figures', 'q3_optimization.png'), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'q3_echo_time.png'), dpi=150, bbox_inches='tight')
     plt.close()
     logger.info("Q3 图表已保存")
 
 
 # ============================================================
-# 综合可视化
+# Q4: 2D 等时线分析
 # ============================================================
-def plot_comprehensive(env: Env):
-    """生成综合分析图"""
-    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+def solve_q4():
+    """
+    Q4: 在问题3基础上, 船可在海面 (x, y, 0) 任意移动。
 
-    # 1. 海底剖面与三层结构
-    ax = axes[0, 0]
-    xb = np.linspace(0, 2000, 300)
-    yb_flat = np.array([bottom_flat(x) for x in xb])
-    yb_slope = np.array([bottom_sloped(x, env) for x in xb])
-    ax.fill_between(xb, 0, yb_flat, color='saddlebrown', alpha=0.3, label='Flat Bottom')
-    ax.plot(xb, yb_slope, 'r-', linewidth=2, label='Sloped Bottom')
-    ax.axhline(y=0, color='blue', linewidth=2)
-    ax.axhline(y=env.flat_depth, color='brown', linestyle='--', alpha=0.5)
-    ax.axhline(y=env.flat_depth+env.h1, color='gray', linestyle='--', alpha=0.5)
-    ax.text(1800, 250, 'Water', fontsize=10, color='blue')
-    ax.text(1800, 550, 'Sediment', fontsize=10, color='brown')
-    ax.text(1800, 650, 'Basement', fontsize=10, color='gray')
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('(a) Three-Layer Ocean Model')
-    ax.invert_yaxis()
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    (1) 回波时间 t 关于 (x, y) 的二元函数
+    (2) 三维曲面图 + 二维等高线图 (等时线), 梯度路径规划
+    """
+    logger.info("=" * 60)
+    logger.info("Q4: 2D 等时线分析")
+    logger.info("=" * 60)
 
-    # 2. Snell折射示意
-    ax = axes[0, 1]
-    angles = np.linspace(0, 80, 9)
-    for a0 in angles:
-        rad = np.radians(a0)
-        # 水层
-        x1 = 350 * np.tan(rad)
-        ax.plot([0, x1], [150, 500], 'b-', alpha=0.5)
-        # 折射到淤泥层
-        th1 = snell_refract(rad, env.c0, env.c1)
-        if th1 is not None:
-            x2 = x1 + env.h1 * np.tan(th1)
-            ax.plot([x1, x2], [500, 600], 'g-', alpha=0.5)
-            # 折射到硬底层
-            th2 = snell_refract(th1, env.c1, env.c2)
-            if th2 is not None:
-                x3 = x2 + env.h2 * np.tan(th2)
-                ax.plot([x2, x3], [600, 700], 'r-', alpha=0.5)
-        ax.text(x1+5, 490, f'{a0}°', fontsize=7)
+    x_t, y_t, z_t = 100.0, 50.0, -100.0
 
-    ax.axhline(y=0, color='blue', linewidth=2)
-    ax.axhline(y=500, color='brown', linewidth=1.5, linestyle='--')
-    ax.axhline(y=600, color='gray', linewidth=1.5, linestyle='--')
-    ax.plot(0, 150, 'r^', markersize=12, label='Source')
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('(b) Snell Refraction — Ray Tracing')
-    ax.invert_yaxis()
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    logger.info(f"目标: ({x_t}, {y_t}, {z_t})")
+    logger.info("t(x, y) = 2*sqrt((x-100)^2 + (y-50)^2 + 100^2) / 1500")
 
-    # 3. 折射角 vs 入射角
-    ax = axes[0, 2]
-    th0_arr = np.linspace(0, 89, 200)
-    th1_arr = []
-    th2_arr = []
-    for t0 in th0_arr:
-        t1 = snell_refract(np.radians(t0), env.c0, env.c1)
-        th1_arr.append(np.degrees(t1) if t1 is not None else np.nan)
-        if t1 is not None:
-            t2 = snell_refract(t1, env.c1, env.c2)
-            th2_arr.append(np.degrees(t2) if t2 is not None else np.nan)
-        else:
-            th2_arr.append(np.nan)
+    # 网格
+    x_arr = np.linspace(-100, 300, 200)
+    y_arr = np.linspace(-100, 200, 200)
+    X, Y = np.meshgrid(x_arr, y_arr)
+    Z_dist = np.sqrt((X - x_t)**2 + (Y - y_t)**2 + z_t**2)
+    T = 2 * Z_dist / C * 1000  # ms
 
-    ax.plot(th0_arr, th1_arr, 'g-', linewidth=2, label='θ₁ (Sediment)')
-    ax.plot(th0_arr, th2_arr, 'r-', linewidth=2, label='θ₂ (Basement)')
-    ax.axvline(x=np.degrees(env.crit_angle), color='k', linestyle='--',
-               label=f'Critical Angle ({np.degrees(env.crit_angle):.1f}°)')
-    ax.set_xlabel('Incident Angle θ₀ (degrees)')
-    ax.set_ylabel('Refracted Angle (degrees)')
-    ax.set_title('(c) Snell\'s Law Refraction Angles')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # 梯度
+    dT_dx = 2 * (X - x_t) / (C * Z_dist) * 1000  # ms/m
+    dT_dy = 2 * (Y - y_t) / (C * Z_dist) * 1000
 
-    # 4. RL vs 距离
-    ax = axes[1, 0]
-    r_arr = np.linspace(10, 2000, 200)
-    rl_direct = env.SL - 20*np.log10(r_arr)
-    ax.plot(r_arr, rl_direct, 'b-', linewidth=2, label='Direct Path TL')
-    ax.axhline(y=env.threshold, color='r', linestyle='--', label=f'Threshold ({env.threshold} dB)')
-    ax.fill_between(r_arr, rl_direct, env.threshold,
-                    where=rl_direct >= env.threshold, alpha=0.2, color='green')
-    ax.fill_between(r_arr, rl_direct, env.threshold,
-                    where=rl_direct < env.threshold, alpha=0.2, color='red')
-    ax.set_xlabel('Range (m)')
-    ax.set_ylabel('Received Level (dB)')
-    ax.set_title('(d) Detection Range Analysis')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # 等时线值
+    t_levels = np.linspace(T.min(), T.max(), 20)
 
-    # 5. 暗礁几何
-    ax = axes[1, 1]
-    tri = reef_vertices(env)
-    reef_patch = patches.Polygon(tri, closed=True, fc='darkred', ec='black', alpha=0.7)
-    ax.add_patch(reef_patch)
-    xb2 = np.linspace(800, 1200, 100)
-    yb2 = np.array([bottom_flat(x) for x in xb2])
-    ax.fill_between(xb2, 0, yb2, color='saddlebrown', alpha=0.3)
-    ax.axhline(y=0, color='blue', linewidth=2)
+    logger.info(f"最小回波时间: {T.min():.2f} ms at ({x_t:.0f}, {y_t:.0f})")
+    logger.info(f"最大回波时间: {T.max():.2f} ms")
 
-    # 画几条被遮挡的射线
-    for rx in [0, 40, 80, 120, 160]:
-        blocked = ray_blocked_by_reef(0, 150, rx, 150, env)
-        color = 'red' if blocked else 'green'
-        ax.plot([0, rx], [150, 150], color=color, alpha=0.5, linewidth=1.5)
+    # 梯度路径规划模拟
+    # 从起点 (-50, -50) 出发, 沿负梯度方向移动
+    start = np.array([-50.0, -50.0])
+    path = [start.copy()]
+    lr = 5.0  # 步长
+    for _ in range(100):
+        pos = path[-1]
+        gx = 2 * (pos[0] - x_t) / (C * np.sqrt((pos[0]-x_t)**2 + (pos[1]-y_t)**2 + z_t**2))
+        gy = 2 * (pos[1] - y_t) / (C * np.sqrt((pos[0]-x_t)**2 + (pos[1]-y_t)**2 + z_t**2))
+        new_pos = pos - lr * np.array([gx, gy])
+        path.append(new_pos)
+        if np.linalg.norm(new_pos - np.array([x_t, y_t])) < 1.0:
+            break
+    path = np.array(path)
 
-    ax.plot(0, 150, 'r^', markersize=12, label='Source')
-    ax.set_xlabel('Horizontal Distance (m)')
-    ax.set_ylabel('Depth (m)')
-    ax.set_title('(e) Reef Geometry & Ray Blocking')
-    ax.invert_yaxis()
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    logger.info(f"梯度路径: {len(path)} 步, 终点 ({path[-1,0]:.1f}, {path[-1,1]:.1f})")
 
-    # 6. 回波时间分析
-    ax = axes[1, 2]
-    r_arr2 = np.linspace(10, 2000, 200)
-    t_direct = 2 * r_arr2 / env.c0
-    ax.plot(r_arr2, t_direct * 1000, 'b-', linewidth=2, label='Direct Path')
-    ax.axhline(y=env.max_time * 1000, color='r', linestyle='--',
-               label=f'Time Limit ({env.max_time*1000:.0f} ms)')
-    ax.set_xlabel('Range (m)')
-    ax.set_ylabel('Echo Time (ms)')
-    ax.set_title('(f) Echo Time vs Range')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    plot_q4(X, Y, T, t_levels, x_t, y_t, z_t, dT_dx, dT_dy, path)
+
+    return {
+        'target': {'x': x_t, 'y': y_t, 'z': z_t},
+        'formula': 't(x,y) = 2*sqrt((x-100)^2 + (y-50)^2 + 10000) / 1500',
+        'min_time_ms': float(T.min()),
+        'max_time_ms': float(T.max()),
+        'gradient_path_steps': len(path),
+        'gradient终点': {'x': float(path[-1, 0]), 'y': float(path[-1, 1])},
+    }
+
+
+def plot_q4(X, Y, T, t_levels, x_t, y_t, z_t, dT_dx, dT_dy, path):
+    """Q4可视化: 3D曲面 + 等时线 + 梯度路径"""
+    fig = plt.figure(figsize=(20, 12))
+
+    # (a) 3D 曲面图
+    ax1 = fig.add_subplot(221, projection='3d')
+    surf = ax1.plot_surface(X, Y, T, cmap='viridis', alpha=0.8)
+    ax1.set_xlabel('X (m)')
+    ax1.set_ylabel('Y (m)')
+    ax1.set_zlabel('Echo Time (ms)')
+    ax1.set_title('(a) 3D Surface: t(x, y)')
+    fig.colorbar(surf, ax=ax1, shrink=0.5, label='Time (ms)')
+
+    # (b) 等时线图 (等高线)
+    ax2 = fig.add_subplot(222)
+    cs = ax2.contour(X, Y, T, levels=t_levels, cmap='coolwarm')
+    ax2.contourf(X, Y, T, levels=t_levels, cmap='coolwarm', alpha=0.3)
+    ax2.clabel(cs, inline=True, fontsize=8, fmt='%.1f')
+    ax2.plot(x_t, y_t, 'r*', markersize=15, label=f'Target ({x_t},{y_t})')
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_title('(b) Isochrone Map (Equal-Time Lines)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal')
+
+    # (c) 梯度场
+    ax3 = fig.add_subplot(223)
+    skip = 10
+    ax3.quiver(X[::skip, ::skip], Y[::skip, ::skip],
+               -dT_dx[::skip, ::skip], -dT_dy[::skip, ::skip],
+               color='blue', alpha=0.5, scale=50)
+    ax3.plot(x_t, y_t, 'r*', markersize=15, label='Target')
+    ax3.set_xlabel('X (m)')
+    ax3.set_ylabel('Y (m)')
+    ax3.set_title('(c) Negative Gradient Field')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    ax3.set_aspect('equal')
+
+    # (d) 梯度路径规划
+    ax4 = fig.add_subplot(224)
+    cs2 = ax4.contour(X, Y, T, levels=t_levels, cmap='coolwarm', alpha=0.5)
+    ax4.plot(path[:, 0], path[:, 1], 'k.-', markersize=4, linewidth=1,
+             label='Gradient Descent Path')
+    ax4.plot(path[0, 0], path[0, 1], 'go', markersize=10, label='Start')
+    ax4.plot(path[-1, 0], path[-1, 1], 'r*', markersize=15, label='End')
+    ax4.plot(x_t, y_t, 'rx', markersize=15, markeredgewidth=3, label='Target')
+    ax4.set_xlabel('X (m)')
+    ax4.set_ylabel('Y (m)')
+    ax4.set_title('(d) Gradient Path Planning')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    ax4.set_aspect('equal')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(LOG_DIR, 'figures', 'comprehensive_analysis.png'), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'q4_isochrone.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+    logger.info("Q4 图表已保存")
+
+
+# ============================================================
+# 综合可视化
+# ============================================================
+def plot_comprehensive(q1, q2, q3, q4):
+    """6合1综合分析图"""
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+
+    # (a) 海底探测几何
+    ax = axes[0, 0]
+    xb = np.linspace(-200, 400, 300)
+    ax.fill_between(xb, 0, 60, color='saddlebrown', alpha=0.3)
+    ax.axhline(y=0, color='blue', linewidth=2, label='Sea Surface')
+    # 标记结核位置
+    for name, pos in [('A', q1['nodule_A']), ('B', q1['nodule_B'])]:
+        ax.plot(pos['x'], pos['z'] if pos['z'] != 0 else 0, 'o',
+                markersize=10, label=f'Nodule {name}')
+    ax.plot(0, 0, 'b^', markersize=12, label='Ship')
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Z (m)')
+    ax.set_title('(a) Detection Geometry')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # (b) Q1 回波时间
+    ax = axes[0, 1]
+    ship_x = np.array([-100, -50, 0, 50, 100])
+    t_A = np.array([136.78, 134.45, 133.42, 133.78, 135.21])
+    t_B = np.array([140.32, 137.89, 136.78, 136.24, 138.45])
+    ax.plot(ship_x, t_A, 'bo-', label='Nodule A')
+    ax.plot(ship_x, t_B, 'rs-', label='Nodule B')
+    ax.set_xlabel('Ship X (m)')
+    ax.set_ylabel('Echo Time (ms)')
+    ax.set_title('(b) Q1: Echo Times')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # (c) Q2 球形结核
+    ax = axes[0, 2]
+    center = q2['center']
+    R = q2['radius']
+    theta = np.linspace(0, 2*np.pi, 50)
+    ax.plot(center['x'] + R*np.cos(theta), center['y'] + R*np.sin(theta),
+            'r-', linewidth=2, label=f'Sphere (R={R:.1f}m)')
+    ax.plot(center['x'], center['y'], 'r*', markersize=15)
+    sonar_pos = [[0,0],[50,0],[0,50],[50,50]]
+    for p in sonar_pos:
+        ax.plot(p[0], p[1], 'b^', markersize=8)
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_title('(c) Q2: Sphere Location')
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+
+    # (d) Q3 t-x 曲线
+    ax = axes[1, 0]
+    x_arr = np.linspace(-200, 400, 200)
+    t_arr = 2 * np.sqrt((x_arr - 100)**2 + 12500) / C * 1000
+    ax.plot(x_arr, t_arr, 'b-', linewidth=2)
+    ax.axvline(x=100, color='r', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Ship X (m)')
+    ax.set_ylabel('Echo Time (ms)')
+    ax.set_title('(d) Q3: t(x) Curve')
+    ax.grid(True, alpha=0.3)
+
+    # (e) Q4 等时线
+    ax = axes[1, 1]
+    x_g = np.linspace(-100, 300, 100)
+    y_g = np.linspace(-100, 200, 100)
+    Xg, Yg = np.meshgrid(x_g, y_g)
+    Tg = 2 * np.sqrt((Xg-100)**2 + (Yg-50)**2 + 10000) / C * 1000
+    cs = ax.contour(Xg, Yg, Tg, levels=15, cmap='coolwarm')
+    ax.contourf(Xg, Yg, Tg, levels=15, cmap='coolwarm', alpha=0.3)
+    ax.plot(100, 50, 'r*', markersize=15, label='Target')
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_title('(e) Q4: Isochrone Map')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # (f) 模型总结
+    ax = axes[1, 2]
+    ax.axis('off')
+    summary = (
+        "Model Summary\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Q1: Point Nodule Localization\n"
+        f"  A: ({q1['nodule_A']['x']:.1f}, {q1['nodule_A']['y']:.1f})\n"
+        f"  B: ({q1['nodule_B']['x']:.1f}, {q1['nodule_B']['y']:.1f})\n\n"
+        f"Q2: Sphere Fitting\n"
+        f"  Center: ({q2['center']['x']:.1f}, {q2['center']['y']:.1f}, {q2['center']['z']:.1f})\n"
+        f"  Radius: {q2['radius']:.2f} m\n\n"
+        f"Q3: t(x) Analysis\n"
+        f"  Min: {q3['min_echo_time_ms']:.2f} ms at x={q3['min_echo_x']:.0f}\n\n"
+        f"Q4: Isochrone Analysis\n"
+        f"  Gradient path: {q4['gradient_path_steps']} steps"
+    )
+    ax.text(0.1, 0.9, summary, transform=ax.transAxes, fontsize=11,
+            verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIG_DIR, 'comprehensive_analysis.png'), dpi=150, bbox_inches='tight')
     plt.close()
     logger.info("综合分析图已保存")
 
@@ -843,33 +749,18 @@ def plot_comprehensive(env: Env):
 # ============================================================
 def main():
     logger.info("=" * 60)
-    logger.info("多静态声纳-海底地形协同优化 — 求解开始")
+    logger.info("2026 CQUPU Math Modeling A: Underwater Target Detection")
     logger.info("=" * 60)
+    logger.info(f"声速: c = {C} m/s")
 
-    env = Env()
+    q1 = solve_q1()
+    q2 = solve_q2()
+    q3 = solve_q3()
+    q4 = solve_q4()
 
-    logger.info(f"声源: SL={env.SL}dB, 深度={env.S_depth}m")
-    logger.info(f"接收阵: {env.Nx}×{env.Nz}, 间距={env.dx}m")
-    logger.info(f"水层: c₀={env.c0}m/s")
-    logger.info(f"淤泥层: c₁={env.c1}m/s, 厚度={env.h1}m")
-    logger.info(f"硬底层: c₂={env.c2}m/s")
-    logger.info(f"海底坡度: α={env.alpha_deg}°")
-    logger.info(f"检测阈值: {env.threshold}dB, 最长回波: {env.max_time}s")
-    logger.info(f"临界全反射角: {np.degrees(env.crit_angle):.2f}°")
+    plot_comprehensive(q1, q2, q3, q4)
 
-    # 综合分析图
-    plot_comprehensive(env)
-
-    # Q1
-    q1 = solve_q1(env)
-
-    # Q2
-    q2 = solve_q2(env)
-
-    # Q3
-    q3 = solve_q3(env)
-
-    # 保存结果 (确保numpy类型转换)
+    # 保存结果
     def convert(obj):
         if isinstance(obj, (np.bool_, np.integer)):
             return int(obj)
@@ -879,28 +770,16 @@ def main():
             return obj.tolist()
         return obj
 
-    all_results = {'Q1': q1, 'Q2': q2, 'Q3': q3}
-
-    output_path = os.path.join(LOG_DIR, 'results.json')
+    all_results = {'Q1': q1, 'Q2': q2, 'Q3': q3, 'Q4': q4}
+    output_path = os.path.join(SCRIPT_DIR, 'results.json')
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False, default=convert)
 
     logger.info(f"结果已保存: {output_path}")
     logger.info("=" * 60)
-    logger.info("求解完成!")
+    logger.info("所有问题求解完成!")
     logger.info("=" * 60)
 
-    print("\n" + "=" * 60)
-    print("求解摘要")
-    print("=" * 60)
-    print(f"Q1 阴影区比例: {q1['shadow_ratio']:.1f}%")
-    print(f"Q1 阴影区范围: {q1['shadow_ranges']}")
-    print(f"Q2 能检测暗礁: {q2['n_detectable']}/25")
-    print(f"Q2 被暗礁遮挡: {q2['n_blocked']}/25")
-    print(f"Q3 最优声源: ({q3['best_position'][0]:.1f}, {q3['best_position'][1]:.1f})")
-    print(f"Q3 最大组合数: {q3['best_count']}/25")
-    print("=" * 60)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

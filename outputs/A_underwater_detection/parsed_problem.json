@@ -1,129 +1,45 @@
 {
   "problem_id": "A",
-  "title": "多静态声纳-海底地形协同优化",
-  "source": "2025高教社杯全国大学生数学建模竞赛A题",
+  "title": "水下目标探测与定位",
+  "source": "2026年重庆邮电大学数学建模竞赛A题",
   "problem_type": {
-    "primary": "多层介质声传播建模与优化",
-    "secondary": ["射线追踪", "声纳检测概率", "组合优化"],
-    "domain": "水下声学 / 反潜作战"
+    "primary": "声呐回波定位与几何优化",
+    "secondary": ["非线性最小二乘", "等时线分析", "梯度路径规划"],
+    "domain": "水下声学 / 深海矿产探测"
   },
-  "parameters": {
-    "source": {
-      "name": "声源S",
-      "initial_position": [0, 0],
-      "depth": 150,
-      "depth_unit": "m",
-      "level": 120,
-      "level_unit": "dB",
-      "note": "声源深度150m，声源级120dB"
-    },
-    "receiver_array": {
-      "name": "均匀线列阵",
-      "size": [5, 5],
-      "spacing": 40,
-      "spacing_unit": "m",
-      "depth_range": [150, 310],
-      "depth_unit": "m",
-      "total_receivers": 25,
-      "note": "5×5阵列，间距40m，覆盖150~310m深度"
-    },
-    "environment": {
-      "water_column": {
-        "sound_speed": 1500,
-        "sound_speed_unit": "m/s",
-        "max_depth": 500,
-        "depth_unit": "m"
-      },
-      "bottom_layers": [
-        {
-          "name": "淤泥层（弱介质）",
-          "sound_speed": 4200,
-          "sound_speed_unit": "m/s",
-          "thickness": 100,
-          "thickness_unit": "m"
-        },
-        {
-          "name": "硬底层（强介质）",
-          "sound_speed": 7000,
-          "sound_speed_unit": "m/s",
-          "thickness": null,
-          "note": "无限厚基底"
-        }
-      ],
-      "flat_bottom_depth": 500,
-      "flat_bottom_depth_unit": "m"
-    },
-    "bottom_slope": {
-      "alpha_deg": 0.8,
-      "alpha_rad": 0.01396,
-      "equation": "y = 500 - x * tan(alpha)",
-      "note": "海底向远端倾斜，坡度0.8度"
-    },
-    "reef": {
-      "name": "三角暗礁",
-      "shape": "triangle",
-      "apex_height": 100,
-      "apex_height_unit": "m",
-      "base_width": 200,
-      "base_width_unit": "m",
-      "height_from_bottom": 100,
-      "note": "三角形截面，底宽200m，高100m，顶部距海平面400m"
-    },
-    "search_region": {
-      "x_range": [-200, 200],
-      "y_range": [-200, 200],
-      "unit": "m",
-      "note": "声源搜索区域为200m×200m正方形"
-    },
-    "detection_threshold": {
-      "two_way_spreading_loss": 6,
-      "unit": "dB",
-      "note": "双程扩展损失6dB"
-    },
-    "detection_range": {
-      "horizontal": 2000,
-      "horizontal_unit": "m",
-      "time_limit": 3.0,
-      "time_limit_unit": "s",
-      "note": "水平检测距离0~2000m，最长回波时间3s"
-    }
+  "context": "深海铁锰结核富含稀有金属, 多波束声呐系统通过发射超声波并接收回波来探测结核位置。",
+  "coordinate_system": {
+    "description": "海平面为XOY平面, Z轴竖直向上",
+    "ship_position": [0, 0, 0],
+    "sound_speed": 1500.0,
+    "sound_speed_unit": "m/s"
   },
-  "constraints": [
-    "声源S只能水平移动，深度固定为150m",
-    "海底坡度α=0.8°，底深y=500-x·tan(α)",
-    "声波在海底发生折射，服从Snell定律",
-    "声波在各层中沿直线传播",
-    "声源级SL=120dB固定不变",
-    "接收阵为5×5均匀线列阵，间距40m",
-    "检测条件：接收声压级 ≥ 6dB（双程扩展损失）",
-    "回波时间不超过3秒"
-  ],
-  "objectives": [
-    {
-      "id": "Q1",
-      "title": "海底平坦时的检测与阴影区",
-      "description": "建立模型确定每个接收阵元可检测到的声源位置集合，找出水平距离2000m以内不能检测到声源的区域（阴影区）",
-      "type": "几何可达性分析"
+  "questions": {
+    "Q1": {
+      "title": "定位两个点状结核",
+      "description": "假设两个结核为质点且都处在海底平面, 船在5个位置测量两个结核的回波时间, 求结核坐标。",
+      "ship_positions_x": [-100, -50, 0, 50, 100],
+      "nodule_A_echo_times_ms": [136.78, 134.45, 133.42, 133.78, 135.21],
+      "nodule_B_echo_times_ms": [140.32, 137.89, 136.78, 136.24, 138.45],
+      "model": "d_i = sqrt((x_s_i - x_n)^2 + y_n^2 + z_n^2), t = 2d/c"
     },
-    {
-      "id": "Q2",
-      "title": "三角暗礁的遮挡分析",
-      "description": "确定所有能检测到暗礁的声源-接收阵元组合，绘制暗礁遮挡示意图",
-      "type": "遮挡检测"
+    "Q2": {
+      "title": "定位球形结核",
+      "description": "球形铁锰结核完全暴露在海底之上, 球心坐标未知、半径未知。4个声呐位置的回波延迟, 求球心位置和大小。",
+      "sonar_positions": [[0,0,0], [50,0,0], [0,50,0], [50,50,0]],
+      "echo_delays_ms": [133.42, 135.89, 136.24, 138.57],
+      "model": "D_i = d_i + R, D_i = distance from sonar to sphere center"
     },
-    {
-      "id": "Q3",
-      "title": "声源位置优化",
-      "description": "在200m×200m区域内寻找最优声源位置，使得能发现暗礁的声源-接收阵元组合数最多",
-      "type": "组合优化"
+    "Q3": {
+      "title": "回波时间函数 t(x)",
+      "description": "探测船沿X轴移动 (x,0,0), 目标在 (100,50,-100)。推导 t(x) 函数关系, 绘制曲线, 分析几何特征。",
+      "target": [100, 50, -100],
+      "model": "t(x) = 2*sqrt((x-100)^2 + 50^2 + 100^2) / 1500"
+    },
+    "Q4": {
+      "title": "2D 等时线分析",
+      "description": "船可在海面 (x,y,0) 任意移动探测同一点目标。绘制 t 的三维曲面图和二维等高线图, 分析等时线几何特征和梯度路径规划。",
+      "model": "t(x,y) = 2*sqrt((x-100)^2 + (y-50)^2 + 100^2) / 1500"
     }
-  ],
-  "key_equations": {
-    "snells_law": "sin(θ₀)/c₀ = sin(θ₁)/c₁ = sin(θ₂)/c₂",
-    "transmission_loss": "TL = 20·log₁₀(R₁) + 20·log₁₀(R₂)",
-    "received_level": "RL = SL - TL",
-    "flat_bottom_depth": "y_b(x) = 500 - x·tan(0.8°)",
-    "detection_condition": "RL ≥ 6 dB",
-    "time_constraint": "T = 2(R₁/c₀ + R₂/c₁) ≤ 3s"
   }
 }
