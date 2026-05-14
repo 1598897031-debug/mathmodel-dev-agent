@@ -13,4 +13,8 @@ venv/
 .claude/sessions/
 projects/
 outputs/
+!outputs/A_underwater_detection/
+outputs/mathmodel_*/
+outputs/test_solve_*/
+outputs/release_test_*/
 test_github_output/

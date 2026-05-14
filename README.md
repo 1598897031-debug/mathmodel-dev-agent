@@ -1,20 +1,23 @@
 # MathModel Dev Agent
 
-An LLM-powered multi-agent system that automates the entire mathematical modeling workflow — from problem parsing to paper generation.
+**Self-Correcting Multi-Agent Mathematical Modeling System**
 
-MathModel Dev Agent takes a math modeling problem statement (TXT, Markdown, or PDF) and orchestrates a pipeline of six specialized agents to produce a complete solution: structured problem analysis, modeling strategy selection, executable Python code, experiment reports with visualizations, a formatted paper (Markdown + Word), and automatic git versioning.
+An LLM-powered multi-agent system that automates the entire mathematical modeling workflow — from problem parsing to paper generation — with autonomous error detection and self-correction.
 
-## Features
+MathModel Dev Agent takes a math modeling problem statement (TXT, Markdown, or PDF) and orchestrates a pipeline of six specialized agents to produce a complete solution. When the system detects a mismatch between its understanding and the actual problem, it triggers a **reality audit** that can re-parse the problem, redesign the mathematical model, and rewrite the solver — all without human intervention.
 
-- **Problem Parser Agent** — Extracts structured problem specifications from TXT/Markdown/PDF files using LLM-based information extraction
-- **Modeling Strategy Agent** — Generates multiple candidate modeling approaches with pros/cons analysis and recommends the optimal route; includes a fallback knowledge base for prediction, optimization, path planning, and statistics problems
-- **Code Execution Agent** — Auto-generates Python solution code, executes it in a sandboxed subprocess, and performs up to 3 rounds of LLM-assisted debugging on failure
-- **Experiment Agent** — Computes evaluation metrics (RMSE, MAPE, MAE, R², accuracy), generates prediction curves, error distributions, and scatter plots
-- **Paper Agent** — Produces a full mathematical modeling paper in Markdown and exports to Word (.docx)
-- **GitHub Agent** — Auto-generates README, project description, changelog, summary JSON, and performs git commit/push
-- **Dual LLM Backend** — Supports Claude (Anthropic) and OpenAI with automatic fallback
-- **Fallback Mode** — Runs without API keys using built-in knowledge base templates for all problem types
-- **Unified CLI** — Product-like command interface with `solve`, `list`, and `info` subcommands
+## Project Overview
+
+MathModel Dev Agent solves math modeling competition problems end-to-end. The system:
+
+1. **Parses** problem statements from PDF/TXT/Markdown into structured specifications
+2. **Designs** mathematical models with multiple candidate approaches
+3. **Generates** Python solution code and executes it in a sandboxed environment
+4. **Analyzes** results with metrics, visualizations, and experiment reports
+5. **Writes** formatted papers in Markdown and Word
+6. **Version-controls** everything with automatic git commits
+
+The distinguishing feature is the **self-correction mechanism**: a reality audit that compares the system's claimed model against the actual problem, catching misinterpretations before they propagate through the pipeline.
 
 ## Architecture
 
@@ -31,8 +34,13 @@ flowchart TD
     C -.->|fallback| C1[Knowledge Base<br/>16 built-in approaches]
     D -.->|fallback| D1[Code Templates<br/>4 problem-type templates]
 
+    D -->|error detected| H{Reality Audit}
+    H -->|mismatch| B
+    H -->|verified| E
+
     style A fill:#e1f5fe
     style G fill:#e8f5e9
+    style H fill:#fff3e0
     style B1 fill:#fff3e0
     style C1 fill:#fff3e0
     style D1 fill:#fff3e0
@@ -48,6 +56,58 @@ flowchart TD
 | Experiment | `ExecResult` | Metrics (RMSE/MAPE/R²) + plots + report |
 | Paper | All previous outputs | `paper.md` + `paper.docx` |
 | GitHub | All outputs | README, changelog, git commit |
+
+## Multi-Agent Workflow
+
+Six specialized agents execute in a fixed DAG:
+
+| Agent | Responsibility | Key Capability |
+|-------|---------------|----------------|
+| **Parser Agent** | Extract structured problem specs from documents | LLM-based information extraction with fallback to raw text |
+| **Strategy Agent** | Generate multiple modeling approaches | Fallback knowledge base with 16 approaches across 4 problem types |
+| **Code Agent** | Generate and execute Python solution code | Sandboxed execution with up to 3 rounds of auto-debugging |
+| **Experiment Agent** | Compute metrics and generate visualizations | RMSE, MAPE, MAE, R², accuracy; prediction curves, error plots |
+| **Paper Agent** | Generate formatted mathematical modeling papers | Markdown output with Word (.docx) export |
+| **GitHub Agent** | Automate version control and documentation | README, changelog, project summary, git commit/push |
+
+### Fallback Modes
+
+The system runs without API keys using built-in templates and knowledge bases:
+
+- **Parser**: Extracts raw text from documents (no LLM classification)
+- **Strategy**: Matches problem type to 16 pre-built approaches
+- **Code**: Uses problem-type-specific templates (optimization, prediction, path planning, statistics)
+- **Paper**: Generates structured paper from templates
+
+## Self-Correction Mechanism
+
+The reality audit is the system's key differentiator. It works as follows:
+
+### How It Works
+
+1. **Claim Verification** — After the Strategy Agent recommends a model, the system compares the claimed approach against the actual problem text
+2. **PDF Re-read** — The problem PDF is re-parsed with full attention to question text (not just title/keywords)
+3. **Mismatch Detection** — If the model doesn't match the problem, the system flags it as a critical risk
+4. **Autonomous Rewrite** — The system re-parses the problem, designs new models, and regenerates the solver
+
+### What It Catches
+
+| Error Type | Detection Method | Response |
+|------------|-----------------|----------|
+| Wrong problem interpretation | Reality audit: PDF re-read | Full re-parse and solver rewrite |
+| Numerical divergence | Runtime monitoring (values → billions) | Reduce learning rate, add normalization |
+| Poor fit quality | RMS residual check | Wider grid search, multi-start optimization |
+| Module not found | Import error detection | Implement from scratch |
+
+### Real-World Demonstration
+
+In the [underwater detection case study](examples/underwater_detection_case/), the system:
+- Initially misidentified a "2026 CQUPU" problem as "2025 CUMCM" (both involve underwater acoustics)
+- Generated ~900 lines of code for the wrong problem (Snell refraction instead of echo time geometry)
+- The reality audit caught the mismatch and triggered a complete rewrite
+- The corrected solver (~780 lines) solved all 4 questions correctly
+
+See [CASE_STUDY.md](CASE_STUDY.md) for the full narrative.
 
 ## CLI Usage
 
@@ -82,6 +142,59 @@ python main.py <problem_file>
 | `--debug` | Enable debug mode (full traceback on errors) |
 | `--skills` | Display active skills in the execution summary |
 
+## Real Case Study
+
+The system has been validated on a real math modeling competition problem:
+
+**Problem**: Underwater Target Detection & Localization (2026 CQUPU Math Modeling A)
+
+| Question | Result |
+|----------|--------|
+| Q1 — Point nodule localization | Nodule A: (0.75, 79.44, 0) m, B: (1.12, 82.20, 0) m |
+| Q2 — Sphere fitting | Center: (20.23, 19.85, -103.46) m, R = 7.52 m |
+| Q3 — Echo time function | t(x) = 2√((x-100)² + 12500) / 1500, min = 149.07 ms |
+| Q4 — 2D isochrone analysis | Gradient path converges in 101 steps |
+
+The full case study, including the self-correction narrative, is documented in:
+- [CASE_STUDY.md](CASE_STUDY.md) — Complete error → audit → rewrite workflow
+- [examples/underwater_detection_case/](examples/underwater_detection_case/) — Curated artifacts and key figures
+
+## Outputs
+
+Each `solve` run generates a self-contained directory under `outputs/`:
+
+| File | Description |
+|------|-------------|
+| `code/solution.py` | Executable Python solution code |
+| `code/execution_log.txt` | Execution log with debug history |
+| `plots/prediction_curve.png` | Actual vs. predicted comparison chart |
+| `plots/error_distribution.png` | Error distribution bar chart |
+| `plots/scatter_plot.png` | Actual vs. predicted scatter plot |
+| `paper/paper.md` | Mathematical modeling paper (Markdown) |
+| `paper/paper.docx` | Paper exported to Word (if `python-docx` installed) |
+| `experiment_report.md` | Experiment report with metrics and visualizations |
+| `README.md` | Auto-generated project README |
+| `PROJECT_DESCRIPTION.md` | Detailed project description |
+| `CHANGES.md` | Version changelog |
+| `summary.json` | Structured project summary |
+
+## Current Features
+
+| Component | Status |
+|-----------|--------|
+| Core infrastructure | Complete |
+| 6-agent pipeline | Complete |
+| Self-correction mechanism | Complete (reality audit + autonomous rewrite) |
+| Fallback knowledge base | Complete (16 approaches across 4 problem types) |
+| Code auto-debug loop | Complete (max 3 retries) |
+| Experiment metrics | Complete (RMSE, MAPE, MAE, R², accuracy) |
+| Paper generation | Complete (Markdown + Word export) |
+| GitHub automation | Complete (README, changelog, git commit) |
+| Unified CLI | Complete (solve / list / info) |
+| Execution logging | Complete |
+| Visualization (plots) | Requires `matplotlib` dependency |
+| LLM integration | Works with API keys; fallback mode without |
+
 ## Quick Start
 
 ```bash
@@ -101,55 +214,6 @@ python main.py solve examples/sample_prediction.txt --project-name forecast
 
 # List past runs
 python main.py list
-
-# View run details
-python main.py info outputs/mathmodel_20260513_225826
-```
-
-## Example
-
-Given `examples/sample_optimization.txt`:
-
-```text
-某工厂生产两种产品 A 和 B。
-生产 A 每件需要 2 小时加工、1 小时组装；
-生产 B 每件需要 1 小时加工、3 小时组装。
-每周加工工时不超过 120 小时，组装工时不超过 90 小时。
-产品 A 每件利润 50 元，产品 B 每件利润 40 元。
-求每周最大利润。
-```
-
-Running `python main.py solve examples/sample_optimization.txt` produces:
-
-```
-================================================================
-  Pipeline Execution Summary
-================================================================
-
-  Status:   [OK] Success
-  Project:  outputs/mathmodel_20260513_225826
-
-  Agent                     Status     Time
-  ---------------------------------------------
-  Problem Parser          [OK]       0.0s
-  Modeling Strategy       [OK]       0.0s
-  Code Execution          [OK]       0.04s
-  Experiment Analysis     [OK]       0.0s
-  Paper Writing           [OK]       0.0s
-  GitHub Automation       [OK]       3.14s
-  ---------------------------------------------
-  Total                              3.21s
-
-  Output Files:
-    - outputs/.../paper/paper.md
-    - outputs/.../code/solution.py
-    - outputs/.../experiment_report.md
-    - outputs/.../README.md
-
-  Model Metrics:
-    rmse: 1700.3185
-    r_squared: -1.6399
-================================================================
 ```
 
 ## Project Structure
@@ -180,50 +244,16 @@ mathmodel-dev-agent/
 │   └── config.py                 # Configuration management
 ├── examples/                     # Sample problem files
 │   ├── sample_optimization.txt
-│   └── sample_prediction.txt
+│   ├── sample_prediction.txt
+│   └── underwater_detection_case/ # Real case study artifacts
+├── problems/                     # Problem PDF files
 ├── tests/                        # Unit tests
 ├── outputs/                      # Generated run outputs (gitignored)
+├── CASE_STUDY.md                 # Self-correction workflow showcase
 ├── main.py                       # CLI entry point
 ├── requirements.txt              # Python dependencies
-├── pyproject.toml                # Project metadata
-└── .env.example                  # Environment variable template
+└── .gitignore
 ```
-
-## Outputs
-
-Each `solve` run generates a self-contained directory under `outputs/`:
-
-| File | Description |
-|------|-------------|
-| `code/solution.py` | Executable Python solution code |
-| `code/execution_log.txt` | Execution log with debug history |
-| `plots/prediction_curve.png` | Actual vs. predicted comparison chart |
-| `plots/error_distribution.png` | Error distribution bar chart |
-| `plots/scatter_plot.png` | Actual vs. predicted scatter plot |
-| `paper/paper.md` | Mathematical modeling paper (Markdown) |
-| `paper/paper.docx` | Paper exported to Word (if `python-docx` installed) |
-| `experiment_report.md` | Experiment report with metrics and visualizations |
-| `README.md` | Auto-generated project README |
-| `PROJECT_DESCRIPTION.md` | Detailed project description |
-| `CHANGES.md` | Version changelog |
-| `summary.json` | Structured project summary |
-| `execution.log` | Full pipeline execution log with timestamps |
-
-## Current Status
-
-| Component | Status |
-|-----------|--------|
-| Core infrastructure | Complete |
-| 6-agent pipeline | Complete |
-| Fallback knowledge base | Complete (16 approaches across 4 problem types) |
-| Code auto-debug loop | Complete (max 3 retries) |
-| Experiment metrics | Complete (RMSE, MAPE, MAE, R², accuracy) |
-| Paper generation | Complete (Markdown + Word export) |
-| GitHub automation | Complete (README, changelog, git commit) |
-| Unified CLI | Complete (solve / list / info) |
-| Execution logging | Complete |
-| Visualization (plots) | Requires `matplotlib` dependency |
-| LLM integration | Works with API keys; fallback mode without |
 
 ## Roadmap
 
@@ -231,6 +261,7 @@ Each `solve` run generates a self-contained directory under `outputs/`:
 
 - [x] Core infrastructure (config, LLM client, code executor, project manager)
 - [x] Six-agent pipeline with DAG orchestration
+- [x] Self-correction mechanism (reality audit + autonomous rewrite)
 - [x] LLM-based problem parsing and structured extraction
 - [x] Multi-candidate strategy generation with fallback knowledge base
 - [x] Auto code generation with sandboxed execution and debug loop
@@ -239,7 +270,7 @@ Each `solve` run generates a self-contained directory under `outputs/`:
 - [x] GitHub automation (README, changelog, git commit/push)
 - [x] Unit tests for all agents
 - [x] Unified CLI with solve/list/info subcommands
-- [x] Execution logging and run history
+- [x] Real case study validation (underwater detection)
 
 ### Planned
 

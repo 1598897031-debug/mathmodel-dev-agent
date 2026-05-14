@@ -1,23 +1,28 @@
 # MathModel Dev Agent - 依赖清单
-# 基础设施
-anthropic>=0.30.0
-openai>=1.30.0
-pydantic>=2.7.0
 
-# 文档解析
+# === Core (required) ===
+# No mandatory external deps — the pipeline runs with stdlib only in fallback mode.
+# Install these for full functionality:
+
+# LLM backends (at least one needed for LLM-powered parsing/strategy/code-gen)
+anthropic>=0.30.0       # Claude API
+openai>=1.30.0          # OpenAI API
+
+# Document parsing (PDF support)
 pypdf>=4.0.0
 
-# 科学计算
+# Scientific computing (used by generated solver code)
 numpy>=1.24.0
-scipy>=1.11.0
 
-# 绘图
+# Visualization (used by experiment agent and solver code)
 matplotlib>=3.8.0
 
-# CLI
-typer>=0.12.0
-rich>=13.0.0
+# === Optional (dev/tools) ===
+scipy>=1.11.0           # Used by some solver templates; solver can work without it
+pydantic>=2.7.0         # Data validation (not currently used in core)
+typer>=0.12.0           # CLI framework (not currently used; argparse used instead)
+rich>=13.0.0            # Terminal formatting (not currently used)
 
-# 开发工具
+# === Dev/test ===
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
