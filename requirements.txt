@@ -1,6 +1,7 @@
 # MathModel Dev Agent - 依赖清单
 
 # === Core (required) ===
+python-docx>=1.1.0      # Word document generation (PaperAgent)
 # No mandatory external deps — the pipeline runs with stdlib only in fallback mode.
 # Install these for full functionality:
 

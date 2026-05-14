@@ -36,7 +36,23 @@
       "Bash(gh auth *)",
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(gh repo *)",
+      "Bash(git config *)",
+      "Bash(git push *)",
+      "Bash(curl -s --connect-timeout 5 https://github.com)",
+      "Bash(curl -v --connect-timeout 10 https://github.com)",
+      "Bash(curl -x http://127.0.0.1:8080 -s --connect-timeout 5 https://github.com)",
+      "Bash(curl -v -x http://127.0.0.1:8080 --connect-timeout 5 https://github.com)",
+      "Bash(tasklist)",
+      "Bash(where python *)",
+      "Read(//d/python/**)",
+      "Read(//d/Scripts/**)",
+      "Bash(conda --version)",
+      "Read(//c/Users/谢百川/AppData/Local/Programs/Python/**)",
+      "Read(//c/Users/谢百川/AppData/Local/pip/**)",
+      "Bash(C:/Users/谢百川/AppData/Local/Microsoft/WindowsApps/python.exe *)",
+      "Bash(PYTHONPATH=\"D:/Lib/site-packages\" python *)"
     ]
   }
 }

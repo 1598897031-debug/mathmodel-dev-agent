@@ -6,6 +6,7 @@ Usage:
     python main.py solve <problem_file> [--project-name NAME] [--verbose] [--debug] [--skills]
     python main.py list
     python main.py info <project_dir>
+    python main.py sync [--yes] [--message MSG]
     python main.py <problem_file>              # backward compat alias for solve
 """
 
@@ -354,6 +355,72 @@ def cmd_info(args):
     print(f"{'=' * 60}")
 
 
+def cmd_sync(args):
+    """Sync system changes to GitHub: detect, commit, push."""
+    from mathmodel.sync import detect_changed_files, classify_changes, generate_summary, sync_push
+
+    files = detect_changed_files()
+    classified = classify_changes(files)
+
+    if not files:
+        print("No changes detected.")
+        return
+
+    # Show summary
+    print(generate_summary(files))
+
+    if not classified["system"]:
+        print("\nOnly output changes -- nothing to commit.")
+        return
+
+    # Auto-prompt for confirmation
+    if not args.yes:
+        answer = input("\nCommit and push system changes? [Y/n] ").strip().lower()
+        if answer and answer != "y":
+            print("Aborted.")
+            return
+
+    result = sync_push(message=args.message)
+    if result["success"]:
+        print(f"\n{result['message']}")
+        if result["summary"]:
+            print(result["summary"])
+    else:
+        print(f"\nFailed: {result['message']}")
+        sys.exit(1)
+
+
+def cmd_check(args):
+    """Check for system-level changes and prompt for sync."""
+    from mathmodel.sync import detect_changed_files, classify_changes, generate_summary, sync_push
+
+    files = detect_changed_files()
+    if not files:
+        return
+
+    classified = classify_changes(files)
+
+    # Only prompt for system-level changes
+    if not classified["system"]:
+        return
+
+    print("\n" + "=" * 64)
+    print("  [auto-sync] System-level changes detected!")
+    print("=" * 64)
+    print(generate_summary(files))
+
+    answer = input("\nCommit and push now? [Y/n] ").strip().lower()
+    if answer and answer != "y":
+        print("Skipped. You can sync later with: python main.py sync")
+        return
+
+    result = sync_push()
+    if result["success"]:
+        print(f"\n{result['message']}")
+    else:
+        print(f"\nSync failed: {result['message']}")
+
+
 def main():
     """Main entry point with subcommand support"""
     parser = argparse.ArgumentParser(
@@ -365,6 +432,8 @@ Examples:
   python main.py solve examples/sample_prediction.txt --project-name forecast
   python main.py list
   python main.py info outputs/mathmodel_20260513_153831
+  python main.py sync                    # commit & push system changes
+  python main.py sync --yes              # skip confirmation
   python main.py examples/sample_optimization.txt   # alias for solve
         """,
     )
@@ -418,8 +487,25 @@ Examples:
         help="Path to the project output directory",
     )
 
+    # --- sync subcommand ---
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Commit and push system changes to GitHub",
+        description="Detect system-level changes, commit, and push. Output-only changes are ignored.",
+    )
+    sync_parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
+    sync_parser.add_argument(
+        "--message", "-m",
+        default=None,
+        help="Custom commit message (auto-generated if omitted)",
+    )
+
     # Backward compatibility: if no subcommand keyword, inject "solve"
-    if len(sys.argv) > 1 and sys.argv[1] not in ("solve", "list", "info", "-h", "--help"):
+    if len(sys.argv) > 1 and sys.argv[1] not in ("solve", "list", "info", "sync", "-h", "--help"):
         sys.argv.insert(1, "solve")
 
     # Parse args
@@ -432,10 +518,14 @@ Examples:
     # Dispatch
     if args.command == "solve":
         cmd_solve(args)
+        # Auto-check: prompt if system changes detected after solve
+        cmd_check(args)
     elif args.command == "list":
         cmd_list(args)
     elif args.command == "info":
         cmd_info(args)
+    elif args.command == "sync":
+        cmd_sync(args)
     else:
         parser.print_help()
 

@@ -121,6 +121,9 @@ python main.py list
 # Show details of a specific run
 python main.py info <project_dir>
 
+# Sync system changes to GitHub
+python main.py sync [--yes] [--message MSG]
+
 # Backward compatible (alias for solve)
 python main.py <problem_file>
 ```
@@ -132,6 +135,7 @@ python main.py <problem_file>
 | `solve` | Run the complete modeling pipeline |
 | `list` | List all past solve runs with status |
 | `info` | Display detailed info for a specific run |
+| `sync` | Commit and push system changes to GitHub |
 
 ### Options
 
@@ -239,13 +243,19 @@ mathmodel-dev-agent/
 │   │   ├── file_ops.py           #   File operations
 │   │   ├── validators.py         #   Input validation
 │   │   └── git_ops.py            #   Git operations wrapper
+│   ├── sync.py                   # GitHub sync & auto-update detection
 │   ├── templates/                # Prompt and document templates
 │   ├── orchestrator.py           # Pipeline DAG orchestration
 │   └── config.py                 # Configuration management
-├── examples/                     # Sample problem files
+├── examples/                     # Curated examples (tracked in git)
+│   ├── A_underwater_detection_demo/  # Demo: real competition problem
+│   │   ├── README.md             #   Showcase with figures
+│   │   ├── problem.txt           #   Problem statement
+│   │   ├── key_figures/          #   Result visualizations
+│   │   ├── solution_summary.md   #   Results summary
+│   │   └── strategy.md           #   Model selection rationale
 │   ├── sample_optimization.txt
-│   ├── sample_prediction.txt
-│   └── underwater_detection_case/ # Real case study artifacts
+│   └── sample_prediction.txt
 ├── problems/                     # Problem PDF files
 ├── tests/                        # Unit tests
 ├── outputs/                      # Generated run outputs (gitignored)
@@ -254,6 +264,33 @@ mathmodel-dev-agent/
 ├── requirements.txt              # Python dependencies
 └── .gitignore
 ```
+
+### Why `outputs/` Is Not Uploaded
+
+Every `python main.py solve` run generates files under `outputs/` -- solution code, papers, plots, execution logs, and JSON results. These are:
+
+1. **Large and ephemeral** -- each run produces ~10-50 MB of artifacts (papers, figures, code)
+2. **Reproducible** -- any run can be re-executed from the problem file
+3. **Private** -- may contain API keys, execution traces, or intermediate data
+
+The `.gitignore` excludes `outputs/`, `*.docx`, `*.png`, `*.pdf`, and all generated files by default. Only curated examples under `examples/` are tracked.
+
+### GitHub Sync
+
+The repository includes a sync mechanism to keep GitHub updated with system-level changes while ignoring solve outputs:
+
+```bash
+# Check for system changes and push
+python main.py sync
+
+# Skip confirmation prompt
+python main.py sync --yes
+
+# Custom commit message
+python main.py sync -m "feat: add new agent type"
+```
+
+**Auto-detection**: After each `solve` run, the system checks for system-level changes (code, docs, tests) and prompts to sync if needed. Output-only changes are silently ignored.
 
 ## Roadmap
 

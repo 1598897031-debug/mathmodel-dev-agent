@@ -1,20 +1,75 @@
+# ============================================
+# MathModel Dev Agent - .gitignore
+# ============================================
+# Rule: ALL generated/run outputs are ignored.
+# Only system code + curated examples are tracked.
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 dist/
 build/
-.env
-*.log
+*.egg
+
+# ---------- Virtual environments ----------
 .venv/
 venv/
+env/
+
+# ---------- Environment secrets ----------
+.env
+.env.local
+.env.*.local
+
+# ---------- IDE / Editor ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Logs ----------
+*.log
+execution.log
+
+# ---------- Generated outputs (ALL solve runs) ----------
+outputs/
+
+# ---------- Temporary / Cache ----------
+temp/
+cache/
+tmp/
+
+# ---------- Claude Code ----------
 .claude/session-data/
 .claude/worktrees/
 .claude/sessions/
+
+# ---------- Project-specific ----------
 projects/
-outputs/
-!outputs/A_underwater_detection/
-outputs/mathmodel_*/
-outputs/test_solve_*/
-outputs/release_test_*/
 test_github_output/
+mimo token.txt
+「
+
+# ---------- Generated documents & images ----------
+*.pdf
+*.docx
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# ---------- Data / JSON outputs ----------
+results.json
+
+# ---------- Exceptions: curated examples are tracked ----------
+!examples/
+!examples/**

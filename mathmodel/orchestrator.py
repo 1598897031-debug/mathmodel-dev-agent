@@ -171,7 +171,6 @@ class Orchestrator:
         output_files = {}
         if "paper" in results and results["paper"].success:
             meta = results["paper"].metadata or {}
-            output_files["paper_md"] = meta.get("md_file")
             output_files["paper_docx"] = meta.get("docx_file")
         if "experiment" in results and results["experiment"].success:
             output_files["report"] = results["experiment"].output.get("report_file")
