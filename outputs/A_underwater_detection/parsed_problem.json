@@ -1,0 +1,129 @@
+{
+  "problem_id": "A",
+  "title": "多静态声纳-海底地形协同优化",
+  "source": "2025高教社杯全国大学生数学建模竞赛A题",
+  "problem_type": {
+    "primary": "多层介质声传播建模与优化",
+    "secondary": ["射线追踪", "声纳检测概率", "组合优化"],
+    "domain": "水下声学 / 反潜作战"
+  },
+  "parameters": {
+    "source": {
+      "name": "声源S",
+      "initial_position": [0, 0],
+      "depth": 150,
+      "depth_unit": "m",
+      "level": 120,
+      "level_unit": "dB",
+      "note": "声源深度150m，声源级120dB"
+    },
+    "receiver_array": {
+      "name": "均匀线列阵",
+      "size": [5, 5],
+      "spacing": 40,
+      "spacing_unit": "m",
+      "depth_range": [150, 310],
+      "depth_unit": "m",
+      "total_receivers": 25,
+      "note": "5×5阵列，间距40m，覆盖150~310m深度"
+    },
+    "environment": {
+      "water_column": {
+        "sound_speed": 1500,
+        "sound_speed_unit": "m/s",
+        "max_depth": 500,
+        "depth_unit": "m"
+      },
+      "bottom_layers": [
+        {
+          "name": "淤泥层（弱介质）",
+          "sound_speed": 4200,
+          "sound_speed_unit": "m/s",
+          "thickness": 100,
+          "thickness_unit": "m"
+        },
+        {
+          "name": "硬底层（强介质）",
+          "sound_speed": 7000,
+          "sound_speed_unit": "m/s",
+          "thickness": null,
+          "note": "无限厚基底"
+        }
+      ],
+      "flat_bottom_depth": 500,
+      "flat_bottom_depth_unit": "m"
+    },
+    "bottom_slope": {
+      "alpha_deg": 0.8,
+      "alpha_rad": 0.01396,
+      "equation": "y = 500 - x * tan(alpha)",
+      "note": "海底向远端倾斜，坡度0.8度"
+    },
+    "reef": {
+      "name": "三角暗礁",
+      "shape": "triangle",
+      "apex_height": 100,
+      "apex_height_unit": "m",
+      "base_width": 200,
+      "base_width_unit": "m",
+      "height_from_bottom": 100,
+      "note": "三角形截面，底宽200m，高100m，顶部距海平面400m"
+    },
+    "search_region": {
+      "x_range": [-200, 200],
+      "y_range": [-200, 200],
+      "unit": "m",
+      "note": "声源搜索区域为200m×200m正方形"
+    },
+    "detection_threshold": {
+      "two_way_spreading_loss": 6,
+      "unit": "dB",
+      "note": "双程扩展损失6dB"
+    },
+    "detection_range": {
+      "horizontal": 2000,
+      "horizontal_unit": "m",
+      "time_limit": 3.0,
+      "time_limit_unit": "s",
+      "note": "水平检测距离0~2000m，最长回波时间3s"
+    }
+  },
+  "constraints": [
+    "声源S只能水平移动，深度固定为150m",
+    "海底坡度α=0.8°，底深y=500-x·tan(α)",
+    "声波在海底发生折射，服从Snell定律",
+    "声波在各层中沿直线传播",
+    "声源级SL=120dB固定不变",
+    "接收阵为5×5均匀线列阵，间距40m",
+    "检测条件：接收声压级 ≥ 6dB（双程扩展损失）",
+    "回波时间不超过3秒"
+  ],
+  "objectives": [
+    {
+      "id": "Q1",
+      "title": "海底平坦时的检测与阴影区",
+      "description": "建立模型确定每个接收阵元可检测到的声源位置集合，找出水平距离2000m以内不能检测到声源的区域（阴影区）",
+      "type": "几何可达性分析"
+    },
+    {
+      "id": "Q2",
+      "title": "三角暗礁的遮挡分析",
+      "description": "确定所有能检测到暗礁的声源-接收阵元组合，绘制暗礁遮挡示意图",
+      "type": "遮挡检测"
+    },
+    {
+      "id": "Q3",
+      "title": "声源位置优化",
+      "description": "在200m×200m区域内寻找最优声源位置，使得能发现暗礁的声源-接收阵元组合数最多",
+      "type": "组合优化"
+    }
+  ],
+  "key_equations": {
+    "snells_law": "sin(θ₀)/c₀ = sin(θ₁)/c₁ = sin(θ₂)/c₂",
+    "transmission_loss": "TL = 20·log₁₀(R₁) + 20·log₁₀(R₂)",
+    "received_level": "RL = SL - TL",
+    "flat_bottom_depth": "y_b(x) = 500 - x·tan(0.8°)",
+    "detection_condition": "RL ≥ 6 dB",
+    "time_constraint": "T = 2(R₁/c₀ + R₂/c₁) ≤ 3s"
+  }
+}
