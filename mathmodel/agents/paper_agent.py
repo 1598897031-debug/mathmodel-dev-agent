@@ -17,7 +17,6 @@ import re
 import io
 from pathlib import Path
 from datetime import datetime
-from lxml import etree
 
 from ..core.llm_client import LLMClient, Message
 from ..core.document_parser import ProblemSpec
@@ -478,6 +477,82 @@ def insert_omml_inline(paragraph, latex: str, font_size_pt: int = 12):
 def insert_omml_display(paragraph, latex: str, font_size_pt: int = 12):
     """插入行间 OMML 公式"""
     insert_omml_equation(paragraph, latex, font_size_pt, inline=False)
+
+
+# ==================== 安全公式渲染（文本模式） ====================
+
+# 希腊字母映射（LaTeX → Unicode）
+_GREEK_MAP_SAFE = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+    "epsilon": "ε", "zeta": "ζ", "eta": "η", "theta": "θ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ",
+    "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ",
+    "phi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ",
+    "Sigma": "Σ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+}
+
+# 运算符映射
+_OP_MAP_SAFE = {
+    "cdot": "·", "times": "×", "div": "÷",
+    "pm": "±", "mp": "∓",
+    "leq": "≤", "geq": "≥", "neq": "≠",
+    "approx": "≈", "equiv": "≡",
+    "leftarrow": "←", "rightarrow": "→",
+    "Rightarrow": "⇒", "Leftarrow": "⇐",
+    "infty": "∞", "partial": "∂", "nabla": "∇",
+    "sum": "∑", "prod": "∏", "int": "∫",
+    "quad": " ", "qquad": "  ",
+    "sin": "sin", "cos": "cos", "tan": "tan",
+    "log": "log", "ln": "ln", "exp": "exp",
+    "lim": "lim", "max": "max", "min": "min",
+    "argmin": "argmin", "argmax": "argmax",
+    "left": "", "right": "", "displaystyle": "", "textstyle": "",
+}
+
+
+def _latex_to_text(latex: str) -> str:
+    """
+    将 LaTeX 公式转换为可读的文本格式（安全模式）。
+    使用 Cambria Math 字体渲染，不注入 XML。
+    """
+    tex = latex.strip()
+    if tex.startswith("$$") and tex.endswith("$$"):
+        tex = tex[2:-2].strip()
+    elif tex.startswith("$") and tex.endswith("$"):
+        tex = tex[1:-1].strip()
+
+    # 替换希腊字母和运算符
+    for cmd, char in _GREEK_MAP_SAFE.items():
+        tex = tex.replace(f"\\{cmd}", char)
+    for cmd, char in _OP_MAP_SAFE.items():
+        tex = tex.replace(f"\\{cmd}", char)
+
+    # \frac{a}{b} → (a)/(b)
+    tex = re.sub(r'\\frac\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
+                 r'(\1)/(\2)', tex)
+
+    # \sqrt{x} → √(x)
+    tex = re.sub(r'\\sqrt\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
+                 r'√(\1)', tex)
+
+    # \sqrt[n]{x} → ⁿ√(x)
+    tex = re.sub(r'\\sqrt\[([^\]]*)\]\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
+                 r'^(\1)√(\2)', tex)
+
+    # \text{...} → ...
+    tex = re.sub(r'\\text\s*\{([^}]*)\}', r'\1', tex)
+
+    # \mathbf{...} → ...
+    tex = re.sub(r'\\mathbf\s*\{([^}]*)\}', r'\1', tex)
+
+    # \left, \right — 移除
+    tex = re.sub(r'\\(?:left|right)\s*([()|.\[\]{}])?', r'\1', tex)
+
+    # 清理多余反斜杠
+    tex = re.sub(r'\\[,;!]', '', tex)
+
+    return tex
 
 
 # ==================== 公式标准化模块 ====================
@@ -1132,14 +1207,11 @@ class PaperDocxBuilder:
             if not part_text:
                 continue
             if is_latex:
-                # 使用 OMML 原生方程对象 — 统一 12pt，与正文同高
-                try:
-                    insert_omml_inline(p, part_text, font_size_pt=12)
-                except Exception:
-                    # 回退: 纯文本
-                    run = p.add_run(part_text)
-                    run.font.name = 'Cambria Math'
-                    run.font.size = self.Pt(12)
+                # 安全模式：Cambria Math 文本，统一 12pt
+                formula_text = _latex_to_text(part_text)
+                run = p.add_run(formula_text)
+                run.font.name = 'Cambria Math'
+                run.font.size = self.Pt(12)
             else:
                 run = p.add_run(part_text)
                 run.bold = bold
@@ -1154,7 +1226,7 @@ class PaperDocxBuilder:
 
     def add_paragraph_with_latex(self, text_parts: list, indent: bool = True):
         """
-        添加包含 LaTeX 公式的段落 — 使用 OMML 原生方程
+        添加包含 LaTeX 公式的段落 — 安全文本模式
         text_parts: [(text, is_latex), ...]
         """
         p = self.doc.add_paragraph()
@@ -1163,12 +1235,10 @@ class PaperDocxBuilder:
 
         for text, is_latex in text_parts:
             if is_latex:
-                try:
-                    insert_omml_inline(p, text, font_size_pt=12)
-                except Exception:
-                    run = p.add_run(text)
-                    run.font.name = 'Cambria Math'
-                    run.font.size = self.Pt(12)
+                formula_text = _latex_to_text(text)
+                run = p.add_run(formula_text)
+                run.font.name = 'Cambria Math'
+                run.font.size = self.Pt(12)
             else:
                 run = p.add_run(text)
                 run.font.name = 'Times New Roman'
@@ -1183,7 +1253,7 @@ class PaperDocxBuilder:
     # ==================== 公式 ====================
 
     def add_equation(self, latex: str, label: str = ""):
-        """添加编号公式 — 使用原生 OMML 方程对象，统一 12pt"""
+        """添加编号公式 — 安全文本模式，统一 12pt Cambria Math"""
         self._equation_counter += 1
         num = self._equation_counter
 
@@ -1192,16 +1262,13 @@ class PaperDocxBuilder:
         p.paragraph_format.space_before = self.Pt(6)
         p.paragraph_format.space_after = self.Pt(6)
 
-        # 使用 OMML 原生方程对象
-        try:
-            insert_omml_display(p, latex, font_size_pt=12)
-        except Exception:
-            # 回退: 纯文本
-            run = p.add_run(f"({latex})")
-            run.font.name = 'Cambria Math'
-            run.font.size = self.Pt(12)
+        # 将 LaTeX 转换为可读文本，使用 Cambria Math 字体
+        formula_text = _latex_to_text(latex)
+        run = p.add_run(formula_text)
+        run.font.name = 'Cambria Math'
+        run.font.size = self.Pt(12)
 
-        # 编号 — 右对齐
+        # 编号
         run_num = p.add_run(f"    ({num})")
         run_num.font.name = 'Times New Roman'
         run_num.font.size = self.Pt(12)
