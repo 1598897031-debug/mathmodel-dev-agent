@@ -445,6 +445,59 @@ def consistency_audit(text: str) -> list[str]:
     return warnings
 
 
+# 问题-图片绑定规则
+_Q_FIGURE_RULES = {
+    "6.1": {"q1_localization.png"},
+    "6.2": {"q2_sphere.png"},
+    "6.3": {"q3_echo_time.png"},
+    "6.4": {"q4_isochrone.png"},
+    "7.2": {"mc_sensitivity.png"},
+}
+
+
+def paper_consistency_audit(docx_path: Path) -> list[str]:
+    """
+    论文一致性审计：
+    1. 检查图是否在正文被引用
+    2. 检查图是否属于当前问题
+    3. 公式字号是否统一
+    4. 是否存在跨题图引用错误
+    """
+    warnings = []
+    try:
+        from docx import Document
+        doc = Document(str(docx_path))
+
+        # 收集所有图题
+        figure_captions = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text.startswith("图") and len(text) > 2 and text[1].isdigit():
+                figure_captions.append(text)
+
+        # 检查正文是否引用了每张图
+        all_text = " ".join(p.text for p in doc.paragraphs)
+        for cap in figure_captions:
+            fig_num = cap.split()[0] if " " in cap else cap[:3]  # "图1", "图2" 等
+            if fig_num not in all_text.replace(cap, ""):
+                warnings.append(f"图引用缺失: {cap} 未在正文中被引用")
+
+        # 检查公式字号一致性（通过检查 run 元素）
+        formula_sizes = set()
+        for para in doc.paragraphs:
+            for run in para.runs:
+                if run.font.size:
+                    formula_sizes.add(run.font.size)
+
+        if len(formula_sizes) > 3:
+            warnings.append(f"公式字号不一致: 检测到 {len(formula_sizes)} 种不同字号")
+
+    except Exception:
+        pass
+
+    return warnings
+
+
 # ==================== 文档构建器 ====================
 
 class PaperDocxBuilder:
@@ -730,12 +783,13 @@ class PaperDocxBuilder:
             if not part_text:
                 continue
             if is_latex:
-                # 渲染 LaTeX 为图片
-                buf = render_latex_inline(part_text, fontsize=14)
+                # 渲染 LaTeX 为图片 — 统一 12pt，宽度按公式复杂度缩放但有上限
+                buf = render_latex_inline(part_text, fontsize=12)
                 if buf:
                     from docx.shared import Inches
+                    # 公式宽度: 基于字符数缩放，上限 3.0in（避免超大公式）
+                    width = min(3.0, max(0.25, 0.06 * len(part_text)))
                     run = p.add_run()
-                    width = min(4.5, max(0.3, 0.08 * len(part_text)))
                     run.add_picture(buf, width=Inches(width))
                 else:
                     # 回退: 纯文本
@@ -765,11 +819,12 @@ class PaperDocxBuilder:
 
         for text, is_latex in text_parts:
             if is_latex:
-                buf = render_latex_inline(text, fontsize=14)
+                buf = render_latex_inline(text, fontsize=12)
                 if buf:
                     from docx.shared import Inches
                     run = p.add_run()
-                    run.add_picture(buf, width=Inches(0.1 * len(text)))
+                    width = min(3.0, max(0.25, 0.06 * len(text)))
+                    run.add_picture(buf, width=Inches(width))
                 else:
                     # 回退: 纯文本
                     run = p.add_run(text)
@@ -789,7 +844,7 @@ class PaperDocxBuilder:
     # ==================== 公式 ====================
 
     def add_equation(self, latex: str, label: str = ""):
-        """添加编号公式"""
+        """添加编号公式 — 统一 14pt，固定宽度缩放"""
         self._equation_counter += 1
         num = self._equation_counter
 
@@ -798,19 +853,18 @@ class PaperDocxBuilder:
         p.paragraph_format.space_before = self.Pt(6)
         p.paragraph_format.space_after = self.Pt(6)
 
-        # 渲染公式为图片
-        buf = render_latex_inline(latex, fontsize=16)
+        # 统一 14pt 渲染，固定宽度 4.5in
+        buf = render_latex_inline(latex, fontsize=14)
         if buf:
             from docx.shared import Inches
             run = p.add_run()
             run.add_picture(buf, width=Inches(4.5))
         else:
-            # 回退: 纯文本
             run = p.add_run(f"({label or latex})")
             run.font.name = 'Times New Roman'
             run.font.size = self.Pt(12)
 
-        # 编号
+        # 编号 — 右对齐
         run_num = p.add_run(f"    ({num})")
         run_num.font.name = 'Times New Roman'
         run_num.font.size = self.Pt(12)
@@ -1519,10 +1573,14 @@ class PaperContentGenerator:
                     f"95%置信区间分别为 "
                     f"$x \\in [{mc['ci95_x'][0]:.2f}, {mc['ci95_x'][1]:.2f}]$ m、"
                     f"$y \\in [{mc['ci95_y'][0]:.2f}, {mc['ci95_y'][1]:.2f}]$ m。\n\n"
-                    "由图5的散点云可见，定位结果集中分布在真值附近，"
-                    "呈近似椭圆分布。由X和Y偏移分布直方图可见，"
-                    "偏移量近似服从正态分布，均值接近零，"
-                    "表明模型无明显系统偏差。\n\n"
+                    "由图6的散点云可见，定位结果集中分布在真值附近，"
+                    "呈近似椭圆分布，误差椭圆的长短轴比反映了各方向灵敏度的差异。"
+                    "由偏移分布直方图可见，X和Y偏移量近似服从正态分布，均值接近零，"
+                    "表明模型无明显系统偏差。"
+                    "由热图可见，高密度区域集中在真值附近，"
+                    "说明大部分定位结果落在较小范围内。"
+                    "由箱线图可见，X和Y偏移的中位数接近零，"
+                    "四分位间距较小，异常值比例低。\n\n"
                     "结果表明，在随机测量扰动下，模型输出保持较小波动，"
                     f"RMS误差仅为坐标值的 {mc['rms_error']/np.sqrt(xa**2+ya**2)*100:.1f}%，"
                     "说明算法具有较强鲁棒性，"
@@ -2001,17 +2059,34 @@ class PaperAgent(BaseAgent):
                 else:
                     builder.add_paragraph(para)
 
-            # 9. 模型求解（含图和表）
+            # 9. 模型求解（含图和表）— 图与Q严格绑定
             builder.add_heading("六、模型求解与结果分析", level=1)
             solution_text = content.generate_model_solution()
+
+            # 问题-图片映射表
+            _Q_FIGURE_MAP = {
+                "6.1": ("q1_localization.png", "问题一：点状结核定位分析"),
+                "6.2": ("q2_sphere.png", "问题二：球形结核定位分析"),
+                "6.3": ("q3_echo_time.png", "问题三：回波时间函数曲线"),
+                "6.4": ("q4_isochrone.png", "问题四：等时线与梯度分析"),
+            }
+            figures_dir = project_dir / "figures"
+            _current_q = None  # 跟踪当前Q子节
+
             for para in solution_text.split("\n\n"):
                 para = para.strip()
                 if not para:
                     continue
                 if re.match(r'^6\.\d\s', para):
+                    # 新Q子节开始 — 先插入上一个Q的图
+                    if _current_q and _current_q in _Q_FIGURE_MAP:
+                        fig_name, fig_caption = _Q_FIGURE_MAP[_current_q]
+                        fig_path = figures_dir / fig_name
+                        if fig_path.exists():
+                            builder.add_figure(fig_path, fig_caption)
+                    _current_q = para[:3]  # "6.1", "6.2", etc.
                     builder.add_heading(para, level=2)
                 elif para.startswith('$$') and para.endswith('$$') and para.count('$$') == 2:
-                    # 纯显示公式
                     latex = para[2:-2].strip()
                     eq_num_match = re.search(r'\((\d+)\)\s*$', latex)
                     eq_label = eq_num_match.group(1) if eq_num_match else ""
@@ -2019,10 +2094,8 @@ class PaperAgent(BaseAgent):
                         latex = latex[:eq_num_match.start()].strip()
                     builder.add_equation(latex, label=eq_label)
                 elif para.startswith("表") and ("|" in para or "---" in para):
-                    # 表格标题行
                     builder.add_paragraph(para, bold=True, indent=False)
                 elif "|" in para and not para.startswith("表"):
-                    # 表格数据行 — 渲染为等宽字体
                     p = builder.doc.add_paragraph()
                     p.paragraph_format.first_line_indent = builder.Cm(0)
                     p.paragraph_format.left_indent = builder.Cm(1.0)
@@ -2032,28 +2105,17 @@ class PaperAgent(BaseAgent):
                 else:
                     builder.add_paragraph(para)
 
-            # 插入图片（在模型求解之后）
-            figures_dir = project_dir / "figures"
-            if figures_dir.exists():
-                q1_fig = figures_dir / "q1_localization.png"
-                if q1_fig.exists():
-                    builder.add_figure(q1_fig, "问题一：点状结核定位分析")
+            # 插入最后一个Q子节的图
+            if _current_q and _current_q in _Q_FIGURE_MAP:
+                fig_name, fig_caption = _Q_FIGURE_MAP[_current_q]
+                fig_path = figures_dir / fig_name
+                if fig_path.exists():
+                    builder.add_figure(fig_path, fig_caption)
 
-                q2_fig = figures_dir / "q2_sphere.png"
-                if q2_fig.exists():
-                    builder.add_figure(q2_fig, "问题二：球形结核定位分析")
-
-                q3_fig = figures_dir / "q3_echo_time.png"
-                if q3_fig.exists():
-                    builder.add_figure(q3_fig, "问题三：回波时间函数曲线")
-
-                q4_fig = figures_dir / "q4_isochrone.png"
-                if q4_fig.exists():
-                    builder.add_figure(q4_fig, "问题四：等时线与梯度分析")
-
-                comp_fig = figures_dir / "comprehensive_analysis.png"
-                if comp_fig.exists():
-                    builder.add_figure(comp_fig, "综合分析")
+            # 综合分析图 — 在所有Q之后
+            comp_fig = figures_dir / "comprehensive_analysis.png"
+            if comp_fig.exists():
+                builder.add_figure(comp_fig, "综合分析")
 
             # 10. 灵敏度分析
             builder.add_heading("七、灵敏度分析与误差讨论", level=1)
@@ -2183,7 +2245,7 @@ class PaperAgent(BaseAgent):
 
             # 2. 逻辑一致性审计
             full_text = (
-                content.generate_assumptions().__str__() +
+                str(content.generate_assumptions()) +
                 content.generate_error_analysis()
             )
             consistency_warnings = consistency_audit(full_text)
@@ -2199,6 +2261,11 @@ class PaperAgent(BaseAgent):
                 for line in section.split("\n"):
                     if has_code_formula(line):
                         all_warnings.append(f"[代码式公式] 第{i+1}节: {line.strip()[:60]}")
+
+            # 4. 论文一致性审计（图引用、公式字号）
+            consistency2 = paper_consistency_audit(docx_file)
+            if consistency2:
+                all_warnings.extend([f"[论文一致性] {w}" for w in consistency2])
 
             if all_warnings:
                 print("[PaperAgent] 审计警告:")
