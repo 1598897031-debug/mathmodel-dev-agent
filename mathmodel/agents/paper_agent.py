@@ -1439,11 +1439,39 @@ class PaperContentGenerator:
         return ""
 
     def _title(self) -> str:
+        """生成国赛标准标题：基于（模型）的（题目）研究"""
+        raw_title = ""
         if self.spec and self.spec.title:
-            return self.spec.title
-        if self.problem_data.get("title"):
-            return self.problem_data["title"]
-        return "数学建模问题"
+            raw_title = self.spec.title
+        elif self.problem_data.get("title"):
+            raw_title = self.problem_data["title"]
+
+        if not raw_title:
+            return "数学建模问题"
+
+        # 自动提取模型关键词
+        approach = self._best_approach()
+        model_keywords = []
+        if "声呐" in approach or "声呐" in raw_title:
+            model_keywords.append("声呐定位")
+        if "最小二乘" in approach:
+            model_keywords.append("最小二乘")
+        if "等时线" in approach or "梯度" in approach:
+            model_keywords.append("等时线梯度分析")
+        if not model_keywords:
+            model_keywords.append("数学建模")
+
+        model_str = "与".join(model_keywords[:2])
+
+        # 提取题目核心
+        problem_name = raw_title
+        for prefix in ["2026年", "重庆邮电大学", "数学建模竞赛", "A题", "：", ":", " "]:
+            problem_name = problem_name.replace(prefix, "")
+        problem_name = problem_name.strip()
+
+        if problem_name:
+            return f"基于{model_str}模型的{problem_name}研究"
+        return f"基于{model_str}模型的数学建模研究"
 
     def _source(self) -> str:
         return self.problem_data.get("source", "")
