@@ -52,7 +52,9 @@
       "Read(//c/Users/谢百川/AppData/Local/Programs/Python/**)",
       "Read(//c/Users/谢百川/AppData/Local/pip/**)",
       "Bash(C:/Users/谢百川/AppData/Local/Microsoft/WindowsApps/python.exe *)",
-      "Bash(PYTHONPATH=\"D:/Lib/site-packages\" python *)"
+      "Bash(PYTHONPATH=\"D:/Lib/site-packages\" python *)",
+      "Bash(rm -f outputs/A_underwater_detection/paper/final_paper.docx 'outputs/A_underwater_detection/paper/~$nal_paper.docx')",
+      "Bash(ls outputs/A_underwater_detection/paper/)"
     ]
   }
 }
