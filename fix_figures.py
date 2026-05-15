@@ -367,80 +367,77 @@ def plot_comprehensive():
 
 
 def plot_flowchart():
-    """图6：系统流程图"""
-    fig, ax = plt.subplots(figsize=(14, 8))
-    ax.set_xlim(0, 14)
-    ax.set_ylim(0, 8)
+    """图6：问题求解路径图（算法流程）"""
+    fig, ax = plt.subplots(figsize=(12, 10))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 10)
     ax.axis('off')
 
-    # Box style
-    box_kw = dict(boxstyle='round,pad=0.3', facecolor='lightblue', edgecolor='steelblue', linewidth=2)
-    arrow_kw = dict(arrowstyle='->', color='steelblue', lw=2)
+    # Box styles
+    box_normal = dict(boxstyle='round,pad=0.4', facecolor='#E3F2FD', edgecolor='#1565C0', linewidth=2)
+    box_decision = dict(boxstyle='round,pad=0.4', facecolor='#FFF9C4', edgecolor='#F9A825', linewidth=2)
+    box_result = dict(boxstyle='round,pad=0.4', facecolor='#E8F5E9', edgecolor='#2E7D32', linewidth=2)
+    arrow_kw = dict(arrowstyle='->', color='#1565C0', lw=2)
 
     # Title
-    ax.text(7, 7.5, '系统整体流程', fontsize=16, ha='center', fontweight='bold',
+    ax.text(6, 9.5, '问题求解路径图', fontsize=16, ha='center', fontweight='bold',
             fontfamily='SimHei')
 
-    # Row 1: Input → Parser → Strategy → Code
-    boxes = [
-        (1.5, 6, '题目输入\n(TXT/PDF)'),
-        (4, 6, '问题解析\n(Parser Agent)'),
-        (6.5, 6, '策略生成\n(Strategy Agent)'),
-        (9, 6, '代码生成\n(Code Agent)'),
-        (11.5, 6, '实验分析\n(Experiment)'),
-    ]
-    for x, y, text in boxes:
-        ax.text(x, y, text, fontsize=9, ha='center', va='center',
-                bbox=box_kw, fontfamily='SimHei')
+    # Step 1: Input
+    ax.text(6, 8.5, '步骤1：题目输入\n提取声呐回波时间数据、船位坐标',
+            fontsize=10, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
 
-    # Row 2: Paper → GitHub
-    boxes2 = [
-        (4, 4, '论文生成\n(Paper Agent)'),
-        (6.5, 4, '格式校验\n(Validator)'),
-        (9, 4, 'GitHub同步\n(Sync Agent)'),
-        (11.5, 4, '输出\n(final_paper.docx)'),
-    ]
-    for x, y, text in boxes2:
-        ax.text(x, y, text, fontsize=9, ha='center', va='center',
-                bbox=box_kw, fontfamily='SimHei')
+    # Step 2: Distance conversion
+    ax.text(6, 7.3, '步骤2：距离转换\n$d_i = t_i \\cdot c / 2$（回波时间→距离）',
+            fontsize=10, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
 
-    # MC Analysis branch
-    ax.text(1.5, 4, 'Monte Carlo\n灵敏度分析', fontsize=9, ha='center', va='center',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', edgecolor='orange', linewidth=2),
-            fontfamily='SimHei')
+    # Decision: which problem?
+    ax.text(6, 6.1, '判断：问题类型？',
+            fontsize=10, ha='center', va='center', bbox=box_decision, fontfamily='SimHei')
+    ax.text(2.5, 5.3, 'Q1/Q2：定位', fontsize=9, ha='center', fontfamily='SimHei')
+    ax.text(9.5, 5.3, 'Q3/Q4：分析', fontsize=9, ha='center', fontfamily='SimHei')
 
-    # Row 3: Self-correction loop
-    ax.text(6.5, 2, '自纠正回路\n(Reality Audit)', fontsize=9, ha='center', va='center',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', edgecolor='orange', linewidth=2),
-            fontfamily='SimHei')
+    # Q1/Q2 path
+    ax.text(2.5, 4.5, '步骤3a：建立方程组\n$d_i^2 = (x_s-x_n)^2 + y_n^2$',
+            fontsize=9, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
+    ax.text(2.5, 3.3, '步骤4a：求解\n最小二乘/网格搜索+LM',
+            fontsize=9, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
 
-    # Arrows Row 1
-    for i in range(len(boxes)-1):
-        ax.annotate('', xy=(boxes[i+1][0]-0.8, boxes[i+1][1]),
-                    xytext=(boxes[i][0]+0.8, boxes[i][1]),
-                    arrowprops=arrow_kw)
+    # Q3/Q4 path
+    ax.text(9.5, 4.5, '步骤3b：推导解析式\n$t(x) = \\frac{2}{c}\\sqrt{(x-x_t)^2+y_t^2+z_t^2}$',
+            fontsize=9, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
+    ax.text(9.5, 3.3, '步骤4b：分析特征\n对称性、极值、梯度方向',
+            fontsize=9, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
 
-    # Arrow Code → Paper
-    ax.annotate('', xy=(4+0.8, 4), xytext=(9-0.8, 6),
-                arrowprops=dict(arrowstyle='->', color='steelblue', lw=2,
-                                connectionstyle='arc3,rad=0.2'))
+    # Convergence
+    ax.text(6, 2.1, '步骤5：结果验证\n回波时间反算、残差分析',
+            fontsize=10, ha='center', va='center', bbox=box_normal, fontfamily='SimHei')
 
-    # Arrows Row 2
-    for i in range(len(boxes2)-1):
-        ax.annotate('', xy=(boxes2[i+1][0]-0.8, boxes2[i+1][1]),
-                    xytext=(boxes2[i][0]+0.8, boxes2[i][1]),
-                    arrowprops=arrow_kw)
+    # Decision: valid?
+    ax.text(6, 1.1, '验证通过？',
+            fontsize=10, ha='center', va='center', bbox=box_decision, fontfamily='SimHei')
+    ax.text(2.5, 0.3, '否 → 调整参数\n重新求解',
+            fontsize=9, ha='center', fontfamily='SimHei', color='red')
+    ax.text(9.5, 0.3, '是 → 输出结果',
+            fontsize=9, ha='center', fontfamily='SimHei', color='green')
 
-    # Error loop arrow
-    ax.annotate('', xy=(9, 5.5), xytext=(6.5, 2.5),
-                arrowprops=dict(arrowstyle='->', color='red', lw=1.5,
-                                connectionstyle='arc3,rad=-0.3', linestyle='dashed'))
-    ax.text(8.5, 3.5, '失败时\n自动修复', fontsize=8, color='red', ha='center',
-            fontfamily='SimHei')
+    # Result box
+    ax.text(9.5, -0.5, '步骤6：灵敏度分析\nMonte Carlo (N=1000)',
+            fontsize=9, ha='center', va='center', bbox=box_result, fontfamily='SimHei')
 
-    # MC arrow
-    ax.annotate('', xy=(4-0.8, 4), xytext=(1.5+0.8, 4),
-                arrowprops=dict(arrowstyle='<->', color='orange', lw=1.5))
+    # Arrows
+    ax.annotate('', xy=(6, 7.9), xytext=(6, 8.1), arrowprops=arrow_kw)
+    ax.annotate('', xy=(6, 6.7), xytext=(6, 6.9), arrowprops=arrow_kw)
+    ax.annotate('', xy=(2.5, 5.7), xytext=(4.5, 5.7), arrowprops=arrow_kw)
+    ax.annotate('', xy=(9.5, 5.7), xytext=(7.5, 5.7), arrowprops=arrow_kw)
+    ax.annotate('', xy=(2.5, 4.1), xytext=(2.5, 4.2), arrowprops=arrow_kw)
+    ax.annotate('', xy=(9.5, 4.1), xytext=(9.5, 4.2), arrowprops=arrow_kw)
+    ax.annotate('', xy=(4.5, 2.1), xytext=(2.5, 2.9), arrowprops=arrow_kw)
+    ax.annotate('', xy=(7.5, 2.1), xytext=(9.5, 2.9), arrowprops=arrow_kw)
+    ax.annotate('', xy=(6, 1.7), xytext=(6, 1.8), arrowprops=arrow_kw)
+    ax.annotate('', xy=(6, 0.7), xytext=(6, 0.8), arrowprops=arrow_kw)
+    ax.annotate('', xy=(8, 0.3), xytext=(7, 0.7), arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
+    ax.annotate('', xy=(4, 4.5), xytext=(3.5, 0.7), arrowprops=dict(arrowstyle='->', color='red', lw=1.5, linestyle='dashed'))
 
     plt.tight_layout()
     fig.savefig(str(FIG_DIR / "system_flowchart.png"), dpi=300, bbox_inches='tight',
