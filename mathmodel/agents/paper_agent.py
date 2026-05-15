@@ -17,6 +17,7 @@ import re
 import io
 from pathlib import Path
 from datetime import datetime
+from lxml import etree
 
 from ..core.llm_client import LLMClient, Message
 from ..core.document_parser import ProblemSpec
@@ -128,6 +129,355 @@ def render_latex_inline(latex_str: str, fontsize: int = 14) -> io.BytesIO | None
 
     except Exception:
         return None
+
+
+# ==================== LaTeX → OMML 原生公式渲染 ====================
+
+# OMML namespace
+_M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_NS = {"m": _M, "w": _W}
+
+# 希腊字母映射
+_GREEK_MAP = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+    "epsilon": "ε", "zeta": "ζ", "eta": "η", "theta": "θ",
+    "iota": "ι", "kappa": "κ", "lambda": "λ", "mu": "μ",
+    "nu": "ν", "xi": "ξ", "pi": "π", "rho": "ρ",
+    "sigma": "σ", "tau": "τ", "phi": "φ", "chi": "χ",
+    "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ",
+    "Xi": "Ξ", "Pi": "Π", "Sigma": "Σ", "Phi": "Φ",
+    "Psi": "Ψ", "Omega": "Ω",
+}
+
+# 运算符映射
+_OP_MAP = {
+    "cdot": "·", "times": "×", "div": "÷",
+    "pm": "±", "mp": "∓",
+    "leq": "≤", "geq": "≥", "neq": "≠",
+    "approx": "≈", "equiv": "≡",
+    "leftarrow": "←", "rightarrow": "→",
+    "Rightarrow": "⇒", "Leftarrow": "⇐",
+    "infty": "∞", "partial": "∂", "nabla": "∇",
+    "sum": "∑", "prod": "∏", "int": "∫",
+    "sqrt": "√", "quad": " ", "qquad": "  ",
+    "sin": "sin", "cos": "cos", "tan": "tan",
+    "log": "log", "ln": "ln", "exp": "exp",
+    "lim": "lim", "max": "max", "min": "min",
+    "argmin": "argmin", "argmax": "argmax",
+}
+
+
+def _omml_r(text: str, font="Cambria Math", sz="24") -> etree.Element:
+    """创建 OMML run 元素（单个数学符号/文本）"""
+    # 清理控制字符
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+    r = etree.SubElement(etree.Element("dummy"), f"{{{ _M}}}r")
+    rPr = etree.SubElement(r, f"{{{ _M}}}rPr")
+    sty = etree.SubElement(rPr, f"{{{ _M}}}sty")
+    sty.set(f"{{{ _M}}}val", "p")  # plain
+    rFonts = etree.SubElement(rPr, f"{{{ _M}}}rFonts")
+    rFonts.set(f"{{{ _M}}}ascii", font)
+    rFonts.set(f"{{{ _M}}}hAnsi", font)
+    rFonts.set(f"{{{ _M}}}eastAsia", font)
+    szEl = etree.SubElement(rPr, f"{{{ _M}}}sz")
+    szEl.set(f"{{{ _M}}}val", sz)
+    szCs = etree.SubElement(rPr, f"{{{ _M}}}szCs")
+    szCs.set(f"{{{ _M}}}val", sz)
+    t = etree.SubElement(r, f"{{{ _M}}}t")
+    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    t.text = text
+    return r
+
+
+def _omml_e(element_tag: str, *children) -> etree.Element:
+    """创建 OMML 元素并添加子元素"""
+    el = etree.SubElement(etree.Element("dummy"), f"{{{ _M}}}{element_tag}")
+    for child in children:
+        if child is not None:
+            el.append(child)
+    return el
+
+
+def _parse_latex_to_omml(latex: str, sz="24") -> etree.Element:
+    """
+    将 LaTeX 公式解析为 OMML XML 元素。
+    返回 <m:oMath> 元素。
+    """
+    oMath = etree.Element(f"{{{ _M}}}oMath")
+
+    # 清理 LaTeX
+    tex = latex.strip()
+    if tex.startswith("$$") and tex.endswith("$$"):
+        tex = tex[2:-2].strip()
+    elif tex.startswith("$") and tex.endswith("$"):
+        tex = tex[1:-1].strip()
+
+    # 移除 \displaystyle, \textstyle 等
+    tex = re.sub(r'\\(?:display|text)style\s*', '', tex)
+
+    # 递归解析
+    _parse_expr(oMath, tex, sz)
+    return oMath
+
+
+def _parse_expr(parent: etree.Element, tex: str, sz: str):
+    """递归解析 LaTeX 表达式并添加到 parent"""
+    i = 0
+    while i < len(tex):
+        c = tex[i]
+
+        # LaTeX 命令: \xxx
+        if c == '\\':
+            cmd_match = re.match(r'\\([a-zA-Z]+)\s*', tex[i:])
+            if cmd_match:
+                cmd = cmd_match.group(1)
+                i += cmd_match.end()
+
+                # \frac{num}{den}
+                if cmd == "frac":
+                    num, i = _extract_brace(tex, i)
+                    den, i = _extract_brace(tex, i)
+                    _add_fraction(parent, num, den, sz)
+
+                # \sqrt{content} 或 \sqrt[n]{content}
+                elif cmd == "sqrt":
+                    n_val = None
+                    if i < len(tex) and tex[i] == '[':
+                        n_val, i = _extract_bracket(tex, i)
+                    content, i = _extract_brace(tex, i)
+                    _add_radical(parent, content, n_val, sz)
+
+                # \text{...}
+                elif cmd == "text":
+                    content, i = _extract_brace(tex, i)
+                    _add_text(parent, content, sz)
+
+                # \mathbf{...}
+                elif cmd == "mathbf":
+                    content, i = _extract_brace(tex, i)
+                    _add_math_text(parent, content, sz, bold=True)
+
+                # 希腊字母
+                elif cmd in _GREEK_MAP:
+                    _add_char(parent, _GREEK_MAP[cmd], sz)
+
+                # 运算符
+                elif cmd in _OP_MAP:
+                    _add_char(parent, _OP_MAP[cmd], sz)
+
+                # \left, \right — 忽略分隔符大小修饰
+                elif cmd in ("left", "right"):
+                    if i < len(tex):
+                        i += 1  # skip the delimiter
+
+                # \quad, \qquad — 空格
+                elif cmd in ("quad", "qquad"):
+                    _add_char(parent, " ", sz)
+
+                # 未知命令 — 输出原始
+                else:
+                    _add_char(parent, f"\\{cmd}", sz)
+
+            else:
+                # 单字符命令如 \, \; \! \{
+                i += 1
+                if i < len(tex):
+                    i += 1
+            continue
+
+        # 下标 _
+        if c == '_':
+            i += 1
+            sub, i = _extract_single_or_brace(tex, i)
+            # 查找上标
+            sup = None
+            if i < len(tex) and tex[i] == '^':
+                i += 1
+                sup, i = _extract_single_or_brace(tex, i)
+            if sup:
+                _add_sub_sup(parent, sub, sup, sz)
+            else:
+                _add_sub(parent, sub, sz)
+            continue
+
+        # 上标 ^
+        if c == '^':
+            i += 1
+            sup, i = _extract_single_or_brace(tex, i)
+            _add_sup(parent, sup, sz)
+            continue
+
+        # 花括号组
+        if c == '{':
+            content, i = _extract_brace(tex, i)
+            _parse_expr(parent, content, sz)
+            continue
+
+        # 普通字符
+        if c in " \t":
+            i += 1
+            continue
+
+        # 数字序列
+        if c.isdigit():
+            num_match = re.match(r'\d+\.?\d*', tex[i:])
+            if num_match:
+                _add_char(parent, num_match.group(), sz)
+                i += num_match.end()
+                continue
+
+        # 普通字母或符号
+        _add_char(parent, c, sz)
+        i += 1
+
+
+def _extract_brace(tex: str, i: int) -> tuple[str, int]:
+    """提取 {...} 内容"""
+    if i >= len(tex) or tex[i] != '{':
+        return "", i
+    depth = 1
+    start = i + 1
+    i += 1
+    while i < len(tex) and depth > 0:
+        if tex[i] == '{':
+            depth += 1
+        elif tex[i] == '}':
+            depth -= 1
+        i += 1
+    return tex[start:i-1], i
+
+
+def _extract_single_or_brace(tex: str, i: int) -> tuple[str, int]:
+    """提取单字符或 {...}"""
+    if i >= len(tex):
+        return "", i
+    if tex[i] == '{':
+        return _extract_brace(tex, i)
+    return tex[i], i + 1
+
+
+def _extract_bracket(tex: str, i: int) -> tuple[str, int]:
+    """提取 [...] 内容"""
+    if i >= len(tex) or tex[i] != '[':
+        return "", i
+    start = i + 1
+    i += 1
+    while i < len(tex) and tex[i] != ']':
+        i += 1
+    return tex[start:i], i + 1
+
+
+def _add_char(parent: etree.Element, text: str, sz: str):
+    parent.append(_omml_r(text, sz=sz))
+
+
+def _add_text(parent: etree.Element, text: str, sz: str):
+    parent.append(_omml_r(text, font="宋体", sz=sz))
+
+
+def _add_math_text(parent: etree.Element, text: str, sz: str, bold=False):
+    parent.append(_omml_r(text, font="Cambria Math", sz=sz))
+
+
+def _add_fraction(parent: etree.Element, num: str, den: str, sz: str):
+    """添加分数 frac{num}{den}"""
+    f = etree.SubElement(parent, f"{{{ _M}}}f")
+    fNum = etree.SubElement(f, f"{{{ _M}}}fNum")
+    _parse_expr(fNum, num, sz)
+    fDen = etree.SubElement(f, f"{{{ _M}}}fDen")
+    _parse_expr(fDen, den, sz)
+
+
+def _add_radical(parent: etree.Element, content: str, n_val: str | None, sz: str):
+    """添加根号 sqrt{content} 或 sqrt[n]{content}"""
+    rad = etree.SubElement(parent, f"{{{ _M}}}rad")
+    radPr = etree.SubElement(rad, f"{{{ _M}}}radPr")
+    degHide = etree.SubElement(radPr, f"{{{ _M}}}degHide")
+    if n_val is None:
+        degHide.set(f"{{{ _M}}}val", "1")  # hide degree for square root
+    else:
+        degHide.set(f"{{{ _M}}}val", "0")
+        deg = etree.SubElement(rad, f"{{{ _M}}}deg")
+        _parse_expr(deg, n_val, sz)
+    e = etree.SubElement(rad, f"{{{ _M}}}e")
+    _parse_expr(e, content, sz)
+
+
+def _add_sub(parent: etree.Element, sub: str, sz: str):
+    """添加下标 x_{sub}"""
+    sSub = etree.SubElement(parent, f"{{{ _M}}}sSub")
+    e = etree.SubElement(sSub, f"{{{ _M}}}e")
+    _add_char(e, "", sz)  # placeholder for base
+    subEl = etree.SubElement(sSub, f"{{{ _M}}}sub")
+    _parse_expr(subEl, sub, sz)
+
+
+def _add_sup(parent: etree.Element, sup: str, sz: str):
+    """添加上标 x^{sup}"""
+    sSup = etree.SubElement(parent, f"{{{ _M}}}sSup")
+    e = etree.SubElement(sSup, f"{{{ _M}}}e")
+    _add_char(e, "", sz)
+    supEl = etree.SubElement(sSup, f"{{{ _M}}}sup")
+    _parse_expr(supEl, sup, sz)
+
+
+def _add_sub_sup(parent: etree.Element, sub: str, sup: str, sz: str):
+    """添加上下标 x_{sub}^{sup}"""
+    sSubSup = etree.SubElement(parent, f"{{{ _M}}}sSubSup")
+    e = etree.SubElement(sSubSup, f"{{{ _M}}}e")
+    _add_char(e, "", sz)
+    subEl = etree.SubElement(sSubSup, f"{{{ _M}}}sub")
+    _parse_expr(subEl, sub, sz)
+    supEl = etree.SubElement(sSubSup, f"{{{ _M}}}sup")
+    _parse_expr(supEl, sup, sz)
+
+
+def insert_omml_equation(paragraph, latex: str, font_size_pt: int = 12, inline: bool = False):
+    """
+    将 LaTeX 公式作为原生 Word 方程对象插入段落。
+
+    Args:
+        paragraph: python-docx Paragraph 对象
+        latex: LaTeX 公式字符串
+        font_size_pt: 字号（pt），默认 12
+        inline: 是否为行内公式
+    """
+    sz = str(font_size_pt * 2)  # OMML 用半磅 (half-points)
+
+    try:
+        oMath = _parse_latex_to_omml(latex, sz=sz)
+    except Exception:
+        # 解析失败 — 回退到纯文本
+        run = paragraph.add_run(latex)
+        run.font.name = 'Cambria Math'
+        run.font.size = Pt(font_size_pt)
+        return
+
+    if inline:
+        # 行内公式 — 直接插入 <m:oMath>
+        run = paragraph.add_run()
+        run._element.append(oMath)
+    else:
+        # 行间公式 — 用 <m:oMathPara> 包裹，居中
+        oMathPara = etree.Element(f"{{{ _M}}}oMathPara")
+        oMathParaJc = etree.SubElement(oMathPara, f"{{{ _M}}}oMathParaPr")
+        jc = etree.SubElement(oMathParaJc, f"{{{ _M}}}jc")
+        jc.set(f"{{{ _M}}}val", "center")
+        oMathPara.append(oMath)
+        run = paragraph.add_run()
+        run._element.append(oMathPara)
+
+
+def insert_omml_inline(paragraph, latex: str, font_size_pt: int = 12):
+    """插入行内 OMML 公式"""
+    insert_omml_equation(paragraph, latex, font_size_pt, inline=True)
+
+
+def insert_omml_display(paragraph, latex: str, font_size_pt: int = 12):
+    """插入行间 OMML 公式"""
+    insert_omml_equation(paragraph, latex, font_size_pt, inline=False)
 
 
 # ==================== 公式标准化模块 ====================
@@ -734,13 +1084,12 @@ class PaperDocxBuilder:
         return p
 
     def _add_paragraph_with_auto_latex(self, text: str, bold: bool = False, indent: bool = True):
-        """渲染包含 LaTeX 公式的段落"""
+        """渲染包含 LaTeX 公式的段落 — 使用 OMML 原生方程"""
         p = self.doc.add_paragraph()
         if indent:
             p.paragraph_format.first_line_indent = self.Cm(0.74)
 
         # 分割文本和公式
-        # 先处理 $$...$$ (display math)
         parts = []
         remaining = text
         while '$$' in remaining:
@@ -758,7 +1107,7 @@ class PaperDocxBuilder:
         if remaining:
             parts.append((remaining, False))
 
-        # 再处理 $...$ (inline math) in non-latex parts
+        # 再处理 $...$ (inline math)
         final_parts = []
         for part_text, is_latex in parts:
             if is_latex:
@@ -783,18 +1132,13 @@ class PaperDocxBuilder:
             if not part_text:
                 continue
             if is_latex:
-                # 渲染 LaTeX 为图片 — 统一 12pt，宽度按公式复杂度缩放但有上限
-                buf = render_latex_inline(part_text, fontsize=12)
-                if buf:
-                    from docx.shared import Inches
-                    # 公式宽度: 基于字符数缩放，上限 3.0in（避免超大公式）
-                    width = min(3.0, max(0.25, 0.06 * len(part_text)))
-                    run = p.add_run()
-                    run.add_picture(buf, width=Inches(width))
-                else:
+                # 使用 OMML 原生方程对象 — 统一 12pt，与正文同高
+                try:
+                    insert_omml_inline(p, part_text, font_size_pt=12)
+                except Exception:
                     # 回退: 纯文本
                     run = p.add_run(part_text)
-                    run.font.name = 'Times New Roman'
+                    run.font.name = 'Cambria Math'
                     run.font.size = self.Pt(12)
             else:
                 run = p.add_run(part_text)
@@ -810,7 +1154,7 @@ class PaperDocxBuilder:
 
     def add_paragraph_with_latex(self, text_parts: list, indent: bool = True):
         """
-        添加包含 LaTeX 公式的段落
+        添加包含 LaTeX 公式的段落 — 使用 OMML 原生方程
         text_parts: [(text, is_latex), ...]
         """
         p = self.doc.add_paragraph()
@@ -819,16 +1163,11 @@ class PaperDocxBuilder:
 
         for text, is_latex in text_parts:
             if is_latex:
-                buf = render_latex_inline(text, fontsize=12)
-                if buf:
-                    from docx.shared import Inches
-                    run = p.add_run()
-                    width = min(3.0, max(0.25, 0.06 * len(text)))
-                    run.add_picture(buf, width=Inches(width))
-                else:
-                    # 回退: 纯文本
+                try:
+                    insert_omml_inline(p, text, font_size_pt=12)
+                except Exception:
                     run = p.add_run(text)
-                    run.font.name = 'Times New Roman'
+                    run.font.name = 'Cambria Math'
                     run.font.size = self.Pt(12)
             else:
                 run = p.add_run(text)
@@ -844,7 +1183,7 @@ class PaperDocxBuilder:
     # ==================== 公式 ====================
 
     def add_equation(self, latex: str, label: str = ""):
-        """添加编号公式 — 统一 14pt，固定宽度缩放"""
+        """添加编号公式 — 使用原生 OMML 方程对象，统一 12pt"""
         self._equation_counter += 1
         num = self._equation_counter
 
@@ -853,15 +1192,13 @@ class PaperDocxBuilder:
         p.paragraph_format.space_before = self.Pt(6)
         p.paragraph_format.space_after = self.Pt(6)
 
-        # 统一 14pt 渲染，固定宽度 4.5in
-        buf = render_latex_inline(latex, fontsize=14)
-        if buf:
-            from docx.shared import Inches
-            run = p.add_run()
-            run.add_picture(buf, width=Inches(4.5))
-        else:
-            run = p.add_run(f"({label or latex})")
-            run.font.name = 'Times New Roman'
+        # 使用 OMML 原生方程对象
+        try:
+            insert_omml_display(p, latex, font_size_pt=12)
+        except Exception:
+            # 回退: 纯文本
+            run = p.add_run(f"({latex})")
+            run.font.name = 'Cambria Math'
             run.font.size = self.Pt(12)
 
         # 编号 — 右对齐
