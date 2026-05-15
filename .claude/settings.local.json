@@ -55,7 +55,13 @@
       "Bash(PYTHONPATH=\"D:/Lib/site-packages\" python *)",
       "Bash(rm -f outputs/A_underwater_detection/paper/final_paper.docx 'outputs/A_underwater_detection/paper/~$nal_paper.docx')",
       "Bash(ls outputs/A_underwater_detection/paper/)",
-      "Bash(rm -f outputs/A_underwater_detection/paper/final_paper.docx outputs/A_underwater_detection/paper/final_paper_v2.docx)"
+      "Bash(rm -f outputs/A_underwater_detection/paper/final_paper.docx outputs/A_underwater_detection/paper/final_paper_v2.docx)",
+      "Bash(pandoc --version)",
+      "Bash(winget install *)",
+      "Bash(export PATH=\"$PATH:/c/Users/谢百川/AppData/Local/Pandoc\")",
+      "Bash(\"/c/Users/谢百川/AppData/Local/Pandoc/pandoc.exe\" --version)",
+      "Bash(\"/c/Users/谢百川/AppData/Local/Microsoft/WinGet/Packages/JohnMacFarlane.Pandoc_Microsoft.Winget.Source_8wekyb3d8bbwe/pandoc.exe\" --version)",
+      "Bash(/c/Users/谢百川/AppData/Local/Microsoft/WinGet/Packages/JohnMacFarlane.Pandoc_Microsoft.Winget.Source_8wekyb3d8bbwe/pandoc-3.9.0.2/pandoc.exe --version)"
     ]
   }
 }
