@@ -7,6 +7,7 @@ Usage:
     python main.py list
     python main.py info <project_dir>
     python main.py sync [--yes] [--message MSG]
+    python main.py status
     python main.py <problem_file>              # backward compat alias for solve
 """
 
@@ -357,68 +358,74 @@ def cmd_info(args):
 
 def cmd_sync(args):
     """Sync system changes to GitHub: detect, commit, push."""
-    from mathmodel.sync import detect_changed_files, classify_changes, generate_summary, sync_push
+    from mathmodel.sync import (
+        detect_changed_files, classify_changes, sync_push, print_sync_report,
+    )
 
     files = detect_changed_files()
-    classified = classify_changes(files)
 
     if not files:
-        print("No changes detected.")
+        print("[Skipped] No changes detected.")
         return
 
-    # Show summary
-    print(generate_summary(files))
+    classified = classify_changes(files)
 
     if not classified["system"]:
-        print("\nOnly output changes -- nothing to commit.")
+        print("[Skipped] Only problem outputs changed.")
+        print("GitHub sync ignored.")
+        if classified["output"]:
+            print(f"\nOutput files ({len(classified['output'])}):")
+            for f in sorted(classified["output"])[:10]:
+                print(f"  - {f}")
         return
 
-    # Auto-prompt for confirmation
+    # Show what will be committed
+    print(f"\nSystem changes detected: {len(classified['system'])} file(s)")
+    for f in sorted(classified["system"]):
+        print(f"  - {f}")
+
     if not args.yes:
-        answer = input("\nCommit and push system changes? [Y/n] ").strip().lower()
+        answer = input("\nCommit and push to GitHub? [Y/n] ").strip().lower()
         if answer and answer != "y":
             print("Aborted.")
             return
 
     result = sync_push(message=args.message)
-    if result["success"]:
-        print(f"\n{result['message']}")
-        if result["summary"]:
-            print(result["summary"])
-    else:
-        print(f"\nFailed: {result['message']}")
+    print_sync_report(result)
+
+    if not result["success"]:
         sys.exit(1)
 
 
+def cmd_status(args):
+    """Show GitHub sync status: git state, recent commits, repo link."""
+    from mathmodel.sync import get_status_report
+    print(get_status_report())
+
+
 def cmd_check(args):
-    """Check for system-level changes and prompt for sync."""
-    from mathmodel.sync import detect_changed_files, classify_changes, generate_summary, sync_push
+    """Check for system-level changes after a solve and prompt for sync."""
+    from mathmodel.sync import auto_sync, print_sync_report
 
-    files = detect_changed_files()
-    if not files:
+    result = auto_sync()
+
+    if result["mode"] == "skipped":
+        # Silent -- don't interrupt workflow for output-only changes
         return
 
-    classified = classify_changes(files)
+    # System changes detected -- show report and prompt
+    print(result["report"])
 
-    # Only prompt for system-level changes
-    if not classified["system"]:
-        return
-
-    print("\n" + "=" * 64)
-    print("  [auto-sync] System-level changes detected!")
-    print("=" * 64)
-    print(generate_summary(files))
-
-    answer = input("\nCommit and push now? [Y/n] ").strip().lower()
+    answer = input("Push to GitHub now? [Y/n] ").strip().lower()
     if answer and answer != "y":
-        print("Skipped. You can sync later with: python main.py sync")
+        print("Skipped. Run 'python main.py sync' later.")
         return
 
-    result = sync_push()
+    # Already committed in auto_sync, just confirm
     if result["success"]:
-        print(f"\n{result['message']}")
+        print("Done.")
     else:
-        print(f"\nSync failed: {result['message']}")
+        print(f"Failed: {result['message']}")
 
 
 def main():
@@ -434,6 +441,7 @@ Examples:
   python main.py info outputs/mathmodel_20260513_153831
   python main.py sync                    # commit & push system changes
   python main.py sync --yes              # skip confirmation
+  python main.py status                  # show git sync status
   python main.py examples/sample_optimization.txt   # alias for solve
         """,
     )
@@ -504,8 +512,15 @@ Examples:
         help="Custom commit message (auto-generated if omitted)",
     )
 
+    # --- status subcommand ---
+    subparsers.add_parser(
+        "status",
+        help="Show git sync status, recent commits, and repo info",
+        description="Display current branch, recent commits, unpushed changes, and repo link.",
+    )
+
     # Backward compatibility: if no subcommand keyword, inject "solve"
-    if len(sys.argv) > 1 and sys.argv[1] not in ("solve", "list", "info", "sync", "-h", "--help"):
+    if len(sys.argv) > 1 and sys.argv[1] not in ("solve", "list", "info", "sync", "status", "-h", "--help"):
         sys.argv.insert(1, "solve")
 
     # Parse args
@@ -526,6 +541,8 @@ Examples:
         cmd_info(args)
     elif args.command == "sync":
         cmd_sync(args)
+    elif args.command == "status":
+        cmd_status(args)
     else:
         parser.print_help()
 

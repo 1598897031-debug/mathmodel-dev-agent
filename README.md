@@ -124,6 +124,9 @@ python main.py info <project_dir>
 # Sync system changes to GitHub
 python main.py sync [--yes] [--message MSG]
 
+# Show git sync status
+python main.py status
+
 # Backward compatible (alias for solve)
 python main.py <problem_file>
 ```
@@ -136,6 +139,7 @@ python main.py <problem_file>
 | `list` | List all past solve runs with status |
 | `info` | Display detailed info for a specific run |
 | `sync` | Commit and push system changes to GitHub |
+| `status` | Show git sync status, recent commits, repo info |
 
 ### Options
 
@@ -319,6 +323,61 @@ python main.py sync -m "feat: add new agent type"
 - [ ] Integration with math modeling competition databases
 - [ ] Docker-based execution sandbox for stronger isolation
 - [ ] Plugin system for custom agents
+
+## Automatic GitHub Sync
+
+The system includes an automatic GitHub sync mechanism that keeps the repository up-to-date with code changes.
+
+### How It Works
+
+- **After every `solve` run**, the system checks for changes to its own code (agents, configs, templates, CLI, etc.)
+- If system-level changes are detected, it auto-commits with a timestamped message and pushes to GitHub
+- **Problem outputs (`outputs/`) are NEVER synced** — only the system itself is version-controlled
+
+### What Gets Synced
+
+| Synced (system code) | Ignored (problem outputs) |
+|-----------------------|---------------------------|
+| `mathmodel/` (all agents, core, utils) | `outputs/` (all solve results) |
+| `main.py`, `requirements.txt` | `*.docx`, `*.pdf`, `*.png` |
+| `examples/`, `tests/`, `config/` | `results.json`, `execution.log` |
+| `README.md`, `CLAUDE.md`, `.gitignore` | `__pycache__/`, `temp/`, `cache/` |
+
+### Manual Commands
+
+```bash
+# Force sync system changes
+python main.py sync --yes
+
+# Check current sync status
+python main.py status
+```
+
+### Sync Report
+
+After each workflow, a report is printed:
+
+```
+==================================================
+  GitHub Auto Sync Report
+==================================================
+
+  Time: 2026-05-15 14:30:00
+  Branch: master
+
+  Mode: [Executed] Auto-synced to GitHub
+
+  Files Changed:
+    - mathmodel/agents/paper_agent.py
+    - README.md
+
+  Commit: abc1234
+  GitHub: https://github.com/1598897031-debug/mathmodel-dev-agent.git
+
+  Push: SUCCESS
+
+==================================================
+```
 
 ## License
 
