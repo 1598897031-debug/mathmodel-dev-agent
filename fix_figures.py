@@ -18,8 +18,8 @@ from pathlib import Path
 # Chinese font config
 rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 rcParams['axes.unicode_minus'] = False
-rcParams['figure.dpi'] = 200
-rcParams['savefig.dpi'] = 200
+rcParams['figure.dpi'] = 300
+rcParams['savefig.dpi'] = 300
 
 C = 1500.0  # m/s
 FIG_DIR = Path("outputs/A_underwater_detection/figures")
@@ -83,7 +83,7 @@ def plot_q1():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    fig.savefig(str(FIG_DIR / "q1_localization.png"), dpi=200, bbox_inches='tight')
+    fig.savefig(str(FIG_DIR / "q1_localization.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print("  图1: q1_localization.png — OK")
 
@@ -141,7 +141,7 @@ def plot_q2():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    fig.savefig(str(FIG_DIR / "q2_sphere.png"), dpi=200, bbox_inches='tight')
+    fig.savefig(str(FIG_DIR / "q2_sphere.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print("  图2: q2_sphere.png — OK")
 
@@ -189,7 +189,7 @@ def plot_q3():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    fig.savefig(str(FIG_DIR / "q3_echo_time.png"), dpi=200, bbox_inches='tight')
+    fig.savefig(str(FIG_DIR / "q3_echo_time.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print("  图3: q3_echo_time.png — OK")
 
@@ -267,7 +267,7 @@ def plot_q4():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    fig.savefig(str(FIG_DIR / "q4_isochrone.png"), dpi=200, bbox_inches='tight')
+    fig.savefig(str(FIG_DIR / "q4_isochrone.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print("  图4: q4_isochrone.png — OK")
 
@@ -361,20 +361,200 @@ def plot_comprehensive():
     ax.set_title('(f) 结果汇总')
 
     plt.tight_layout()
-    fig.savefig(str(FIG_DIR / "comprehensive_analysis.png"), dpi=200, bbox_inches='tight')
+    fig.savefig(str(FIG_DIR / "comprehensive_analysis.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print("  图5: comprehensive_analysis.png — OK")
 
 
+def plot_flowchart():
+    """图6：系统流程图"""
+    fig, ax = plt.subplots(figsize=(14, 8))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 8)
+    ax.axis('off')
+
+    # Box style
+    box_kw = dict(boxstyle='round,pad=0.3', facecolor='lightblue', edgecolor='steelblue', linewidth=2)
+    arrow_kw = dict(arrowstyle='->', color='steelblue', lw=2)
+
+    # Title
+    ax.text(7, 7.5, '系统整体流程', fontsize=16, ha='center', fontweight='bold',
+            fontfamily='SimHei')
+
+    # Row 1: Input → Parser → Strategy → Code
+    boxes = [
+        (1.5, 6, '题目输入\n(TXT/PDF)'),
+        (4, 6, '问题解析\n(Parser Agent)'),
+        (6.5, 6, '策略生成\n(Strategy Agent)'),
+        (9, 6, '代码生成\n(Code Agent)'),
+        (11.5, 6, '实验分析\n(Experiment)'),
+    ]
+    for x, y, text in boxes:
+        ax.text(x, y, text, fontsize=9, ha='center', va='center',
+                bbox=box_kw, fontfamily='SimHei')
+
+    # Row 2: Paper → GitHub
+    boxes2 = [
+        (4, 4, '论文生成\n(Paper Agent)'),
+        (6.5, 4, '格式校验\n(Validator)'),
+        (9, 4, 'GitHub同步\n(Sync Agent)'),
+        (11.5, 4, '输出\n(final_paper.docx)'),
+    ]
+    for x, y, text in boxes2:
+        ax.text(x, y, text, fontsize=9, ha='center', va='center',
+                bbox=box_kw, fontfamily='SimHei')
+
+    # MC Analysis branch
+    ax.text(1.5, 4, 'Monte Carlo\n灵敏度分析', fontsize=9, ha='center', va='center',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', edgecolor='orange', linewidth=2),
+            fontfamily='SimHei')
+
+    # Row 3: Self-correction loop
+    ax.text(6.5, 2, '自纠正回路\n(Reality Audit)', fontsize=9, ha='center', va='center',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', edgecolor='orange', linewidth=2),
+            fontfamily='SimHei')
+
+    # Arrows Row 1
+    for i in range(len(boxes)-1):
+        ax.annotate('', xy=(boxes[i+1][0]-0.8, boxes[i+1][1]),
+                    xytext=(boxes[i][0]+0.8, boxes[i][1]),
+                    arrowprops=arrow_kw)
+
+    # Arrow Code → Paper
+    ax.annotate('', xy=(4+0.8, 4), xytext=(9-0.8, 6),
+                arrowprops=dict(arrowstyle='->', color='steelblue', lw=2,
+                                connectionstyle='arc3,rad=0.2'))
+
+    # Arrows Row 2
+    for i in range(len(boxes2)-1):
+        ax.annotate('', xy=(boxes2[i+1][0]-0.8, boxes2[i+1][1]),
+                    xytext=(boxes2[i][0]+0.8, boxes2[i][1]),
+                    arrowprops=arrow_kw)
+
+    # Error loop arrow
+    ax.annotate('', xy=(9, 5.5), xytext=(6.5, 2.5),
+                arrowprops=dict(arrowstyle='->', color='red', lw=1.5,
+                                connectionstyle='arc3,rad=-0.3', linestyle='dashed'))
+    ax.text(8.5, 3.5, '失败时\n自动修复', fontsize=8, color='red', ha='center',
+            fontfamily='SimHei')
+
+    # MC arrow
+    ax.annotate('', xy=(4-0.8, 4), xytext=(1.5+0.8, 4),
+                arrowprops=dict(arrowstyle='<->', color='orange', lw=1.5))
+
+    plt.tight_layout()
+    fig.savefig(str(FIG_DIR / "system_flowchart.png"), dpi=300, bbox_inches='tight',
+                facecolor='white')
+    plt.close(fig)
+    print("  图6: system_flowchart.png — OK")
+
+
+def plot_mc_enhanced():
+    """图7：增强版 Monte Carlo 分析"""
+    # Reload data
+    a = res["Q1"]["nodule_A"]
+    xa, ya = a["x"], a["y"]
+    ship_x_arr = np.array(ship_x)
+    echo_a = np.array(t_A)
+    rng = np.random.default_rng(42)
+
+    samples_x, samples_y = [], []
+    for _ in range(1000):
+        noisy = echo_a + rng.normal(0, 0.5, size=len(echo_a))
+        dists = noisy * C / 2000
+        A = np.column_stack([2 * ship_x_arr, -np.ones(len(ship_x_arr))])
+        b_vec = ship_x_arr**2 - dists**2
+        try:
+            result, _, _, _ = np.linalg.lstsq(A, b_vec, rcond=None)
+            a_coeff, b_coeff = result
+            y_sq = max(0, b_coeff - a_coeff**2)
+            samples_x.append(a_coeff)
+            samples_y.append(np.sqrt(y_sq))
+        except:
+            continue
+
+    sx, sy = np.array(samples_x), np.array(samples_y)
+    dx, dy = sx - xa, sy - ya
+    dist = np.sqrt(dx**2 + dy**2)
+
+    fig = plt.figure(figsize=(16, 12))
+
+    # Scatter + ellipse
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.scatter(sx, sy, s=2, alpha=0.2, c='steelblue')
+    ax1.plot(xa, ya, 'r*', markersize=15, label=f'真值 ({xa:.1f}, {ya:.1f})')
+    ax1.plot(np.mean(sx), np.mean(sy), 'kx', markersize=12,
+             label=f'均值 ({np.mean(sx):.2f}, {np.mean(sy):.2f})')
+    from matplotlib.patches import Ellipse
+    cov = np.cov(sx, sy)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+    for nsig, alpha_val in [(2, 0.15), (3, 0.08)]:
+        ell = Ellipse((np.mean(sx), np.mean(sy)),
+                      2*nsig*np.sqrt(eigvals[0]), 2*nsig*np.sqrt(eigvals[1]),
+                      angle=angle, fill=True, alpha=alpha_val, color='steelblue',
+                      label=f'{nsig}σ 椭圆' if nsig == 2 else None)
+        ax1.add_patch(ell)
+    ax1.set_xlabel('X / m')
+    ax1.set_ylabel('Y / m')
+    ax1.set_title('(a) 定位散点云与误差椭圆')
+    ax1.legend(fontsize=8)
+    ax1.set_aspect('equal')
+    ax1.grid(True, alpha=0.3)
+
+    # Offset distribution
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.hist(dx, bins=50, density=True, alpha=0.6, color='steelblue', label='X偏移')
+    ax2.hist(dy, bins=50, density=True, alpha=0.6, color='coral', label='Y偏移')
+    ax2.axvline(0, color='k', linestyle='--')
+    ax2.set_xlabel('偏移量 / m')
+    ax2.set_ylabel('概率密度')
+    ax2.set_title('(b) 偏移分布')
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    # Heatmap
+    ax3 = fig.add_subplot(2, 2, 3)
+    h = ax3.hist2d(dx, dy, bins=50, cmap='YlOrRd', density=True)
+    plt.colorbar(h[3], ax=ax3, label='密度')
+    ax3.set_xlabel('X偏移 / m')
+    ax3.set_ylabel('Y偏移 / m')
+    ax3.set_title('(c) 偏移热图')
+    ax3.set_aspect('equal')
+
+    # Boxplot
+    ax4 = fig.add_subplot(2, 2, 4)
+    bp = ax4.boxplot([dx, dy, dist], labels=['X偏移', 'Y偏移', '距离'],
+                    patch_artist=True, widths=0.5)
+    colors = ['steelblue', 'coral', 'lightgreen']
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    ax4.set_ylabel('误差 / m')
+    ax4.set_title('(d) 误差箱线图')
+    ax4.grid(True, alpha=0.3, axis='y')
+    rms = np.sqrt(np.mean(dx**2 + dy**2))
+    stats = f'X: μ={np.mean(dx):.4f}, σ={np.std(dx):.4f}\nY: μ={np.mean(dy):.4f}, σ={np.std(dy):.4f}\nRMS: {rms:.4f}m'
+    ax4.text(0.98, 0.98, stats, transform=ax4.transAxes, fontsize=8,
+             va='top', ha='right', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+    fig.savefig(str(FIG_DIR / "mc_sensitivity.png"), dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print("  图7: mc_sensitivity.png — OK")
+
+
 if __name__ == "__main__":
     print("=" * 50)
-    print("  图片中文化重生成")
+    print("  图片中文化重生成 (300 DPI)")
     print("=" * 50)
     plot_q1()
     plot_q2()
     plot_q3()
     plot_q4()
     plot_comprehensive()
+    plot_flowchart()
+    plot_mc_enhanced()
     print("=" * 50)
     print("  完成")
     print("=" * 50)

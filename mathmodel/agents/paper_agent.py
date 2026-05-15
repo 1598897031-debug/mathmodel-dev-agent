@@ -15,8 +15,10 @@ import ast
 import json
 import re
 import io
+import zipfile
 from pathlib import Path
 from datetime import datetime
+from lxml import etree
 
 from ..core.llm_client import LLMClient, Message
 from ..core.document_parser import ProblemSpec
@@ -1207,11 +1209,9 @@ class PaperDocxBuilder:
             if not part_text:
                 continue
             if is_latex:
-                # 安全模式：Cambria Math 文本，统一 12pt
-                formula_text = _latex_to_text(part_text)
-                run = p.add_run(formula_text)
-                run.font.name = 'Cambria Math'
-                run.font.size = self.Pt(12)
+                # OMML 原生方程对象
+                from ..utils.omml_renderer import insert_inline_formula
+                insert_inline_formula(p, part_text, font_size_pt=12)
             else:
                 run = p.add_run(part_text)
                 run.bold = bold
@@ -1226,19 +1226,17 @@ class PaperDocxBuilder:
 
     def add_paragraph_with_latex(self, text_parts: list, indent: bool = True):
         """
-        添加包含 LaTeX 公式的段落 — 安全文本模式
+        添加包含 LaTeX 公式的段落 — OMML 原生方程
         text_parts: [(text, is_latex), ...]
         """
+        from ..utils.omml_renderer import insert_inline_formula
         p = self.doc.add_paragraph()
         if indent:
             p.paragraph_format.first_line_indent = self.Cm(0.74)
 
         for text, is_latex in text_parts:
             if is_latex:
-                formula_text = _latex_to_text(text)
-                run = p.add_run(formula_text)
-                run.font.name = 'Cambria Math'
-                run.font.size = self.Pt(12)
+                insert_inline_formula(p, text, font_size_pt=12)
             else:
                 run = p.add_run(text)
                 run.font.name = 'Times New Roman'
@@ -1253,7 +1251,8 @@ class PaperDocxBuilder:
     # ==================== 公式 ====================
 
     def add_equation(self, latex: str, label: str = ""):
-        """添加编号公式 — 安全文本模式，统一 12pt Cambria Math"""
+        """添加编号公式 — 使用 OMML 原生方程对象，统一 12pt"""
+        from ..utils.omml_renderer import insert_display_formula
         self._equation_counter += 1
         num = self._equation_counter
 
@@ -1262,11 +1261,8 @@ class PaperDocxBuilder:
         p.paragraph_format.space_before = self.Pt(6)
         p.paragraph_format.space_after = self.Pt(6)
 
-        # 将 LaTeX 转换为可读文本，使用 Cambria Math 字体
-        formula_text = _latex_to_text(latex)
-        run = p.add_run(formula_text)
-        run.font.name = 'Cambria Math'
-        run.font.size = self.Pt(12)
+        # 使用 OMML 原生方程对象
+        insert_display_formula(p, latex, font_size_pt=12)
 
         # 编号
         run_num = p.add_run(f"    ({num})")
@@ -2548,6 +2544,11 @@ class PaperAgent(BaseAgent):
             comp_fig = figures_dir / "comprehensive_analysis.png"
             if comp_fig.exists():
                 builder.add_figure(comp_fig, "综合分析")
+
+            # 系统流程图
+            flow_fig = figures_dir / "system_flowchart.png"
+            if flow_fig.exists():
+                builder.add_figure(flow_fig, "系统整体流程")
 
             # 10. 灵敏度分析
             builder.add_heading("七、灵敏度分析与误差讨论", level=1)
